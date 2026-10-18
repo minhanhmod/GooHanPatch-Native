@@ -62,6 +62,14 @@ DEFAULT_CONFIG = {
     "settings_title": "GooHan • Cài đặt",
     "server_label": "Địa chỉ máy chủ HTTPS",
     "sync_button_label": "Đồng bộ ngay",
+    'activation_badge': 'GOOHAN • LICENSE ACCESS',
+    'activation_title': 'GOOHAN PATCH',
+    'activation_subtitle': 'Kích hoạt License Key',
+    'activation_description': 'Nhập Key do Admin cấp để xác thực và sử dụng GooHan Patch.',
+    'activation_placeholder': 'GOHANIOS-XXXXXX-XXXXXX-XXXXXX',
+    'activation_remember_label': 'Ghi nhớ Key trên iPhone',
+    'activation_button_label': 'XÁC THỰC VÀO ỨNG DỤNG',
+    'activation_recovery_note': 'Khi Key hết hạn, bạn vẫn có thể khôi phục tệp gốc đã sao lưu.',
 }
 
 
@@ -103,6 +111,12 @@ def init_db():
             token_hash TEXT PRIMARY KEY, license_id TEXT NOT NULL,
             device_hash TEXT NOT NULL, issued_at INTEGER NOT NULL,
             expires_at INTEGER NOT NULL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS license_api_tokens (
+            id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+            label TEXT NOT NULL, created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+            last_used_at INTEGER, use_count INTEGER NOT NULL DEFAULT 0
+        )""")
         conn.execute("CREATE INDEX IF NOT EXISTS license_sessions_key_idx ON license_sessions(license_id)")
 
 
@@ -322,6 +336,47 @@ def check_license_token(header: str):
     return {"license_id":row["id"],"expires_at":row["expires_at"],"server_time":now}
 
 
+def issue_license_api_token(label: str, days_valid: int):
+    if not isinstance(label, str) or not 1 <= len(label.strip()) <= 80:
+        raise ValueError("Tên API token cần 1 đến 80 ký tự")
+    if not isinstance(days_valid, int) or not 1 <= days_valid <= 3650:
+        raise ValueError("Thời hạn API token phải từ 1 đến 3650 ngày")
+    raw = "ghapi_" + secrets.token_urlsafe(48)
+    now = int(time.time())
+    token_id = uuid.uuid4().hex
+    expires_at = now + days_valid * 86400
+    with db() as conn:
+        conn.execute("""INSERT INTO license_api_tokens
+          (id, token_hash, label, created_at, expires_at)
+          VALUES (?, ?, ?, ?, ?)""",
+          (token_id, hashlib.sha256(raw.encode()).hexdigest(), label.strip(), now, expires_at))
+        conn.commit()
+    return {"ok": True, "token": raw, "id": token_id, "expires_at": expires_at,
+            "warning": "Lưu token ngay; máy chủ chỉ lưu mã băm."}
+
+
+def valid_license_api_header(auth_header: str):
+    if not isinstance(auth_header, str) or len(auth_header) > 256 or not auth_header.startswith("Bearer "):
+        return False
+    raw = auth_header[7:]
+    if (len(LICENSE_API_TOKEN) >= 32 and
+            hmac.compare_digest(raw, LICENSE_API_TOKEN)):
+        return True  # Legacy environment token stays supported.
+    if not re.fullmatch(r"ghapi_[A-Za-z0-9_-]{60,90}", raw):
+        return False
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    now = int(time.time())
+    with db() as conn:
+        row = conn.execute("SELECT id, expires_at, revoked FROM license_api_tokens WHERE token_hash=?",
+                           (digest,)).fetchone()
+        if not row or row["revoked"] or row["expires_at"] <= now:
+            return False
+        conn.execute("UPDATE license_api_tokens SET last_used_at=?, use_count=use_count+1 WHERE id=?",
+                     (now, row["id"]))
+        conn.commit()
+    return True
+
+
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "GooHanPatch/2.0"
 
@@ -435,6 +490,27 @@ class RequestHandler(BaseHTTPRequestHandler):
             if status is not None:
                 return self.reply(200, {"ok": True, **status})
             return
+        if path == "/api/admin/license-api/status":
+            if not self.require_admin(): return
+            with db() as conn:
+                active = conn.execute("""SELECT count(*) FROM license_api_tokens
+                    WHERE revoked=0 AND expires_at>?""", (int(time.time()),)).fetchone()[0]
+            return self.reply(200, {
+                "enabled": len(LICENSE_API_TOKEN) >= 32 or active > 0,
+                "legacy_env_enabled": len(LICENSE_API_TOKEN) >= 32,
+                "active_tokens": active,
+                "method": "POST",
+                "path": "/api/admin/licenses/auto",
+                "authorization": "Bearer token",
+                "max_quantity": 100,
+                "duration_starts": "first_activation",
+            })
+        if path == "/api/admin/license-api/tokens":
+            if not self.require_admin(): return
+            with db() as conn:
+                rows = conn.execute("""SELECT id,label,created_at,expires_at,revoked,last_used_at,use_count
+                    FROM license_api_tokens ORDER BY created_at DESC LIMIT 200""").fetchall()
+            return self.reply(200, {"tokens": [dict(row) for row in rows]})
         if path == "/api/admin/licenses":
             if not self.require_admin(): return
             with db() as conn:
@@ -508,12 +584,28 @@ class RequestHandler(BaseHTTPRequestHandler):
             except PermissionError as exc:
                 with LOCK: KEY_ATTEMPTS.setdefault(self.client_address[0],[]).append(time.time())
                 return self.error_json(403,str(exc))
+        if path == "/api/admin/license-api/tokens":
+            if not self.require_admin(): return
+            try:
+                form = self.read_json(2048)
+                if set(form) != {"label", "days_valid"}:
+                    raise ValueError("Trường không hợp lệ")
+                issued = issue_license_api_token(form["label"], form["days_valid"])
+                return self.reply(200, issued)
+            except (ValueError, TypeError, KeyError) as exc:
+                return self.error_json(400, str(exc))
+        if re.fullmatch(r"/api/admin/license-api/tokens/[0-9a-f]{32}/revoke", path):
+            if not self.require_admin(): return
+            token_id = path.split("/")[5]
+            with db() as conn:
+                current = conn.execute("SELECT 1 FROM license_api_tokens WHERE id=?", (token_id,)).fetchone()
+                if not current:
+                    return self.error_json(404, "Không tìm thấy API token")
+                conn.execute("UPDATE license_api_tokens SET revoked=1 WHERE id=?", (token_id,))
+                conn.commit()
+            return self.reply(200, {"ok": True})
         if path == "/api/admin/licenses/auto":
-            # Optional integration for bots/other admin services. Disabled unless
-            # the admin sets a strong random token in ZCloudViet environment.
-            candidate = self.headers.get("Authorization", "")
-            if (len(LICENSE_API_TOKEN) < 32 or len(candidate) > 256 or
-                not hmac.compare_digest(candidate, "Bearer " + LICENSE_API_TOKEN)):
+            if not valid_license_api_header(self.headers.get("Authorization", "")):
                 return self.error_json(403, "API token không hợp lệ")
             try:
                 form = self.read_json(8192)
@@ -743,18 +835,24 @@ ADMIN_HTML = """<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta
 <header><div><span class="tag">CONTROL CENTER / VERSION 5</span><div class="brand">GooHan <b>Patch</b> Admin</div><div class="muted">Quản lý xuất bản và nội dung • Đồng bộ trực tiếp với iPhone</div></div><button class="secondary" id="logout">Đăng xuất ↗</button></header>
 <div class="heroStrip"><div class="countBox" id="totalCount">Tổng: — gói</div><div class="countBox" id="liveCount">Đang xuất bản: —</div><div class="countBox">Trạng thái: <span style="color:#8cf4c4">● LIVE</span></div></div>
 <div class="notice"><b>Giới hạn iOS:</b> Ứng dụng không jailbreak không thể tự dò tìm hoặc thay thế tệp trong vùng dữ liệu riêng của Free Fire hay Free Fire MAX.</div>
-<section class="panel"><span class="tag">01 / BRANDING</span><h2>Tùy chỉnh nội dung ứng dụng</h2><p class="muted subtitle">Đổi tiêu đề, mô tả, nội dung cảnh báo, tên danh mục và màu mặc định. Mỗi iPhone vẫn có thể chọn riêng một trong 24 màu.</p><div class="palette" id="palette"></div><form id="settings"><div class="grid" id="fields"></div><p class="row"><span class="small">Các nội dung cập nhật khi app tải lại cấu hình. Tên dưới icon, icon, quyền iOS và bố cục SwiftUI cần build IPA mới.</span><button>Lưu nội dung</button></p><div class="small" id="configmsg"></div></form></section>
+<section class="panel"><span class="tag">01 / BRANDING</span><h2>Tùy chỉnh nội dung ứng dụng</h2><p class="muted subtitle">Đổi tiêu đề, mô tả, nội dung cảnh báo, tên danh mục và màu mặc định. Mỗi iPhone vẫn có thể chọn riêng một trong 24 màu.</p><div class="palette" id="palette"></div><form id="settings"><div class="grid" id="fields"></div>
+<div style="border-top:1px solid var(--edge);margin-top:24px;padding-top:22px">
+<span class="tag">BRANDING / LICENSE SCREEN</span>
+<h2>Màn hình nhập License Key</h2>
+<p class="muted subtitle">Chỉnh sửa chữ trên màn hình kích hoạt. Màn hình sử dụng nền lưới và màu đã chọn của GooHan Patch, kể cả khi người dùng chưa nhập Key.</p>
+<div class="grid" id="activationFields"></div>
+</div><p class="row"><span class="small">Các nội dung cập nhật khi app tải lại cấu hình. Tên dưới icon, icon, quyền iOS và bố cục SwiftUI cần build IPA mới.</span><button>Lưu nội dung</button></p><div class="small" id="configmsg"></div></form></section>
 <section class="panel"><span class="tag">02 / PATCH PUBLISHER</span><h2 id="formtitle">Đăng gói Patch mới (.3105 hoặc tệp đơn)</h2><p class="muted">Upload trực tiếp gói <b>.3105</b>. Máy chủ đọc các quy tắc trong gói; nếu được mã hóa, điền mật khẩu bên dưới. Không cần nhập tên tệp đích với .3105. Gói chỉ áp dụng trong thư mục mà iOS cho phép người dùng chọn.</p><form id="form"><div class="grid"><div><label>Danh mục</label><select name="game"><option value="free_fire">Free Fire</option><option value="free_fire_max">Free Fire MAX</option></select></div><div><label>Tên chức năng</label><input name="feature" maxlength="80" required></div><div><label>Phiên bản</label><input name="version" maxlength="32" value="1.0" required></div><div><label>Tên tệp đích (chỉ cần cho file đơn, bỏ trống khi dùng .3105)</label><input name="target_name" maxlength="128" placeholder="sample.dat"></div><div><label>Mô tả</label><input name="description" maxlength="280"></div><div><label>Thứ tự (thấp hiển thị trước)</label><input name="sort_order" type="number" min="-10000" max="10000" value="0" required></div><div><label>Xuất bản</label><select name="enabled"><option value="1">Hiển thị</option><option value="0">Ẩn</option></select></div><div><label>Gói .3105 hoặc tệp đơn (tối đa 50 MB)</label><input name="file" type="file" accept=".3105,.bin,.dat,.plist,.json,*/*" required></div><div><label>Mật khẩu của gói .3105 (nếu có, không lưu trên server)</label><input type="password" name="package_password" autocomplete="off" placeholder="Chỉ cần khi gói bị mã hóa"></div></div><p class="row"><span class="small">SHA-256 kiểm tra tính toàn vẹn khi app tải file.</span><span><button type="button" class="secondary" id="cancel" hidden>Hủy sửa</button> <button id="submit">Lưu Patch</button></span></p><div id="msg" class="small"></div></form></section>
 <section class="panel"><span class="tag">03 / LIBRARY</span><div class="row"><h2>Gói Patch đã tạo</h2><button class="secondary" id="refresh">Làm mới</button></div><div id="list" class="muted"></div></section>
 </main><script>
 const csrf=document.querySelector('meta[name="csrf-token"]').content;
-const configFields={title:'Tên hiển thị trong ứng dụng',kicker:'Chữ nhỏ đầu trang',subtitle:'Mô tả ở trang chính',notice:'Thông báo quan trọng',footer:'Nội dung chân trang',accent_hex:'Màu chủ đạo (#RRGGBB)',free_fire_name:'Tên danh mục Free Fire',free_fire_max_name:'Tên danh mục Free Fire MAX',apply_label:'Nhãn bật Patch',restore_label:'Nhãn tắt Patch',support_url:'Link hỗ trợ (HTTPS)',section_label:'Tiêu đề khu vực thư viện',theme_label:'Tiêu đề trang chọn màu',empty_title:'Tiêu đề danh sách trống',empty_subtitle:'Mô tả danh sách trống',navigation_title:'Chữ trên thanh điều hướng',hero_tagline:'Khẩu hiệu ở đầu trang',sync_title:'Tiêu đề ô đồng bộ',settings_title:'Tên màn hình Cài đặt',server_label:'Nhãn địa chỉ máy chủ',sync_button_label:'Tên nút đồng bộ trong Cài đặt'};
+const configFields={title:'Tên hiển thị trong ứng dụng',kicker:'Chữ nhỏ đầu trang',subtitle:'Mô tả ở trang chính',notice:'Thông báo quan trọng',footer:'Nội dung chân trang',accent_hex:'Màu chủ đạo (#RRGGBB)',free_fire_name:'Tên danh mục Free Fire',free_fire_max_name:'Tên danh mục Free Fire MAX',apply_label:'Nhãn bật Patch',restore_label:'Nhãn tắt Patch',support_url:'Link hỗ trợ (HTTPS)',section_label:'Tiêu đề khu vực thư viện',theme_label:'Tiêu đề trang chọn màu',empty_title:'Tiêu đề danh sách trống',empty_subtitle:'Mô tả danh sách trống',navigation_title:'Chữ trên thanh điều hướng',hero_tagline:'Khẩu hiệu ở đầu trang',sync_title:'Tiêu đề ô đồng bộ',settings_title:'Tên màn hình Cài đặt',server_label:'Nhãn địa chỉ máy chủ',sync_button_label:'Tên nút đồng bộ trong Cài đặt',activation_badge:'Nhãn nhỏ màn hình nhập Key',activation_title:'Tiêu đề màn hình nhập Key',activation_subtitle:'Phụ đề màn hình nhập Key',activation_description:'Mô tả hướng dẫn nhập Key',activation_placeholder:'Chữ gợi ý bên trong ô nhập Key',activation_remember_label:'Nhãn ghi nhớ Key',activation_button_label:'Nội dung nút kích hoạt',activation_recovery_note:'Thông báo khôi phục khi Key hết hạn'};
 const form=document.getElementById('form'),msg=document.getElementById('msg');let editing=null,patches=[];
 const colors=['#FF4554','#DC2747','#FF589C','#F78CBF','#FF756A','#FF9248','#F5AE37','#F5D54A','#BEDC4C','#54D96C','#1DCB82','#73E4BA','#36C2B1','#43D5E8','#68BDF6','#438CF5','#566CF3','#7371F6','#A36AF6','#C394FC','#D06ED3','#C99162','#9BAABD','#E3EBFA'];
 const palette=document.getElementById('palette');for(const hex of colors){const b=document.createElement('button');b.type='button';b.className='swatch';b.style.background=hex;b.dataset.hex=hex;b.title=hex;b.setAttribute('aria-label','Chọn màu '+hex);b.onclick=()=>{const field=document.querySelector('[name="accent_hex"]');if(field){field.value=hex;palette.querySelectorAll('.swatch').forEach(v=>v.classList.toggle('selected',v===b))}};palette.append(b)}
 function elem(tag,content,cls){const el=document.createElement(tag);el.textContent=content||'';if(cls)el.className=cls;return el}
 async function asJSON(url,options){const r=await fetch(url,options);const j=await r.json();if(!r.ok)throw Error(j.error||'Lỗi máy chủ');return j}
-async function loadSettings(){const c=await asJSON('/api/config');const root=document.getElementById('fields');root.replaceChildren();for(const [k,label] of Object.entries(configFields)){const wrap=elem('div'),lab=elem('label',label),field=document.createElement(k==='notice'||k==='subtitle'?'textarea':'input');field.name=k;field.value=c[k]||'';field.maxLength=1200;field.style.width='100%';field.style.background='#0e131c';field.style.color='#fff';field.style.border='1px solid #3a4458';field.style.borderRadius='10px';field.style.padding='12px';wrap.append(lab,field);root.append(wrap)}document.getElementById('palette').querySelectorAll('.swatch').forEach(b=>b.classList.toggle('selected',b.dataset.hex.toLowerCase()===c.accent_hex.toLowerCase()))}
+async function loadSettings(){const c=await asJSON('/api/config');const root=document.getElementById('fields');root.replaceChildren();for(const [k,label] of Object.entries(configFields)){const wrap=elem('div'),lab=elem('label',label),field=document.createElement(k==='notice'||k==='subtitle'?'textarea':'input');field.name=k;field.value=c[k]||'';field.maxLength=1200;field.style.width='100%';field.style.background='#0e131c';field.style.color='#fff';field.style.border='1px solid #3a4458';field.style.borderRadius='10px';field.style.padding='12px';wrap.append(lab,field);(k.startsWith('activation_')?document.getElementById('activationFields'):root).append(wrap)}document.getElementById('palette').querySelectorAll('.swatch').forEach(b=>b.classList.toggle('selected',b.dataset.hex.toLowerCase()===c.accent_hex.toLowerCase()))}
 document.getElementById('settings').onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));const el=document.getElementById('configmsg');try{await asJSON('/api/admin/config',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(data)});el.textContent='Đã lưu nội dung. Mở lại ứng dụng hoặc làm mới để cập nhật.'}catch(err){el.textContent=err.message}};
 async function refresh(){try{const j=await asJSON('/api/admin/patches',{headers:{'X-CSRF-Token':csrf}});patches=j.patches||[];document.getElementById('totalCount').textContent='Tổng: '+patches.length+' gói';document.getElementById('liveCount').textContent='Đang xuất bản: '+patches.filter(p=>p.enabled).length;const root=document.getElementById('list');root.replaceChildren();if(!patches.length){root.textContent='Chưa có gói Patch nào.';return}for(const p of patches){const card=elem('div','','card'),header=elem('div','','row'),left=elem('div');left.append(elem('strong',p.feature),document.createTextNode('  '),elem('span',p.enabled?'Đang hiển thị':'Đang ẩn','pill'));
 left.append(elem('div',(p.game==='free_fire'?'Free Fire':'Free Fire MAX')+' · v'+p.version+' · '+p.target_name+' · '+(p.size/1024).toFixed(1)+' KB · '+(p.package_format==='3105'?'gói .3105':'tệp đơn'),'muted'),elem('div',p.description||'','small'),elem('div','SHA-256: '+p.sha256,'small'));
@@ -772,6 +870,123 @@ loadSettings().catch(e=>document.getElementById('configmsg').textContent=e.messa
 ADMIN_HTML = ADMIN_HTML.replace("</main><script>", '\n<section class="panel" id="licensePanel"><span class="tag">04 / LICENSE KEYS</span>\n<h2>Quản lý License Key</h2><p class="muted">Tạo key theo tiền tố, thời hạn ngày/giờ tính từ lần kích hoạt đầu tiên. Chỉ Admin được tạo và thu hồi; key gốc chỉ hiển thị một lần.</p>\n<form id="licenseForm"><div class="grid">\n<div><label>Tiền tố Key (A–Z, 0–9, -)</label><input name="prefix" value="GOOHAN" maxlength="24" required></div>\n<div><label>Số ngày</label><input type="number" name="days" value="7" min="0" max="3650" required></div>\n<div><label>Số giờ (0–23)</label><input type="number" name="hours" value="0" min="0" max="23" required></div>\n<div><label>Số lượng Key (1–100)</label><input type="number" name="quantity" value="1" min="1" max="100" required></div>\n<div><label>Số thiết bị / Key</label><input type="number" name="max_devices" value="1" min="1" max="10" required></div>\n<div><label>Ghi chú</label><input name="note" maxlength="100" placeholder="Đợt phát hành / khách hàng"></div>\n</div><p class="row"><span class="small">Không lưu key gốc vào cơ sở dữ liệu.</span><button type="submit">Tạo Key mới</button></p></form>\n<div id="licenseResult" class="small" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>\n<p class="row"><h3>Key đã tạo</h3><button type="button" class="secondary" id="refreshLicenses">Làm mới</button></p>\n<div id="licenseList"></div></section>\n'+"</main><script>")
 ADMIN_HTML = ADMIN_HTML.replace("</script></body></html>", "\nasync function loadLicenses(){const root=document.getElementById('licenseList');try{\nconst j=await asJSON('/api/admin/licenses',{headers:{'X-CSRF-Token':csrf}});root.replaceChildren();\nfor(const k of j.licenses){const card=elem('div','','card');const bar=elem('div','','row');\nconst left=elem('div');left.append(elem('strong',k.masked),elem('div',((k.duration_seconds/3600).toFixed(1))+' giờ · '+k.devices+'/'+k.max_devices+' máy · '+(k.revoked?'Đã thu hồi':(k.expires_at&&k.expires_at*1000<Date.now()?'Hết hạn':'Đang sử dụng / chưa kích hoạt')),'muted'));\nif(k.note)left.append(elem('div',k.note,'muted'));\nconst ops=elem('div');const rev=elem('button','Thu hồi','danger');rev.disabled=k.revoked;\nrev.onclick=async()=>{if(!confirm('Thu hồi key này ngay?'))return;await asJSON('/api/admin/licenses/'+k.id+'/revoke',{method:'POST',headers:{'X-CSRF-Token':csrf}});await loadLicenses()};\nconst reset=elem('button','Đặt lại máy','secondary');reset.disabled=k.revoked;\nreset.onclick=async()=>{if(!confirm('Hủy mọi phiên đăng nhập và xóa thiết bị đã gắn?'))return;await asJSON('/api/admin/licenses/'+k.id+'/reset-devices',{method:'POST',headers:{'X-CSRF-Token':csrf}});await loadLicenses()};\nops.append(rev,document.createTextNode(' '),reset);bar.append(left,ops);card.append(bar);root.append(card)}\nif(!j.licenses.length)root.textContent='Chưa tạo key nào.';\n}catch(e){root.textContent=e.message}}\ndocument.getElementById('refreshLicenses').onclick=loadLicenses;\ndocument.getElementById('licenseForm').onsubmit=async e=>{e.preventDefault();const el=document.getElementById('licenseResult');\ntry{const f=Object.fromEntries(new FormData(e.target));for(const n of ['days','hours','quantity','max_devices'])f[n]=Number(f[n]);\nconst j=await asJSON('/api/admin/licenses',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(f)});\nel.replaceChildren();const label=elem('p','Key vừa tạo (chỉ hiển thị lần này):');const pre=elem('pre',j.keys.join('\\n'));pre.style.whiteSpace='pre-wrap';pre.style.userSelect='all';\nconst copy=elem('button','Sao chép Key','secondary');copy.type='button';copy.onclick=()=>navigator.clipboard.writeText(j.keys.join('\\n'));\nel.append(label,pre,copy);await loadLicenses();\n}catch(err){el.textContent=err.message}};\nloadLicenses();\n"+"</script></body></html>")
 
+
+# Admin 3-tab layout. The server APIs and mobile client protocol are unchanged.
+ADMIN_TABS_CSS = """
+[hidden]{display:none!important}
+.tabNav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:8px 0 22px;padding:7px;background:#091322;border:1px solid var(--edge);border-radius:16px}
+.tabBtn{width:100%;background:transparent;color:#a6b5ca;border:1px solid transparent;text-align:center;min-height:52px;font-size:13px}
+.tabBtn.active{background:linear-gradient(135deg,#243750,#1a2b42);border-color:#4a6588;color:#fff;box-shadow:0 2px 16px #0004}
+.tabBtn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tabScreen{animation:fadeTab .2s ease}
+@keyframes fadeTab{from{opacity:.5;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.apiGrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.codeBlock{background:#070e19;border:1px solid #31435d;color:#d8e9ff;padding:16px;border-radius:13px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.statusDot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#f69b5b;margin-right:6px}
+.statusDot.ready{background:#65d9a0}
+.tabHeading{font-size:12px;color:#99abc4;letter-spacing:.06em;text-transform:uppercase;margin-bottom:16px}
+#licenseResult pre{background:#070e19;border:1px solid #31435d;padding:14px;border-radius:12px;overflow:auto}
+@media(max-width:680px){.tabNav{gap:3px;padding:5px}.tabBtn{font-size:11px;padding:9px 3px;min-height:50px}.apiGrid{grid-template-columns:1fr}}
+"""
+ADMIN_HTML = ADMIN_HTML.replace('</style></head>', '</style><style>' + ADMIN_TABS_CSS + '</style></head>', 1)
+ADMIN_HTML = ADMIN_HTML.replace('<div class="heroStrip">', '''<nav class="tabNav" aria-label="Danh mục quản trị" role="tablist">
+<button type="button" class="tabBtn active" id="nav-branding" role="tab" aria-controls="tab-branding" aria-selected="true" data-tab="branding">Branding</button>
+<button type="button" class="tabBtn" id="nav-publisher" role="tab" aria-controls="tab-publisher" aria-selected="false" data-tab="publisher">Patch Publisher</button>
+<button type="button" class="tabBtn" id="nav-keys" role="tab" aria-controls="tab-keys" aria-selected="false" data-tab="keys">Quản lý Key</button>
+</nav><div class="heroStrip">''', 1)
+ADMIN_HTML = ADMIN_HTML.replace('<section class="panel"><span class="tag">01 / BRANDING', '<div class="tabScreen" id="tab-branding" role="tabpanel" aria-labelledby="nav-branding"><section class="panel"><span class="tag">01 / BRANDING', 1)
+ADMIN_HTML = ADMIN_HTML.replace('<section class="panel"><span class="tag">02 / PATCH PUBLISHER', '</div><div class="tabScreen" id="tab-publisher" role="tabpanel" aria-labelledby="nav-publisher" hidden><section class="panel"><span class="tag">02 / PATCH PUBLISHER', 1)
+ADMIN_HTML = ADMIN_HTML.replace('<section class="panel" id="licensePanel">', '</div><div class="tabScreen" id="tab-keys" role="tabpanel" aria-labelledby="nav-keys" hidden><section class="panel" id="licensePanel">', 1)
+
+AUTO_API_PANEL = '''<section class="panel" id="licenseApiPanel">
+<span class="tag">API / AUTOMATION</span><h2>API tự động tạo Key</h2>
+<p class="muted">Tạo token ngay tại đây để kết nối bot, shop hoặc website bán key. Bot sẽ gọi API bằng Bearer token để cấp key theo ngày/giờ, tiền tố và số lượng bạn đặt. Không đưa token vào IPA hoặc JavaScript công khai.</p>
+<form id="apiTokenForm" class="row" style="margin:15px 0 18px">
+<div style="flex:2;min-width:160px"><label>Tên API Token</label><input name="label" maxlength="80" value="Website bán key" required></div>
+<div style="flex:1;min-width:130px"><label>Thời hạn token (ngày)</label><input name="days_valid" type="number" value="90" min="1" max="3650" required></div>
+<div style="align-self:flex-end"><button type="submit">Tạo API Token</button></div>
+</form>
+<div id="newApiToken" class="small" aria-live="polite" style="overflow-wrap:anywhere"></div>
+<div class="row" style="margin:15px 0"><h3>Danh sách API Token</h3><button type="button" class="secondary" id="refreshApiTokens">Làm mới</button></div>
+<div id="apiTokenList" class="small">Đang tải...</div>
+<hr style="border:0;border-top:1px solid var(--edge);margin:22px 0">
+
+<div class="row"><div class="countBox"><span class="statusDot" id="apiDot"></span><b id="apiStatus">Đang kiểm tra...</b></div><button class="secondary" type="button" id="refreshApi">Kiểm tra API</button></div>
+<div class="apiGrid" style="margin-top:18px"><div>
+<label>Endpoint</label><div class="codeBlock" id="autoApiUrl">POST /api/admin/licenses/auto</div>
+<label style="margin-top:18px">Request JSON</label><div class="codeBlock" id="autoApiBody">{"prefix":"GOOHAN","days":7,"hours":12,"quantity":1,"max_devices":1,"note":"Đơn hàng tự động"}</div>
+<p class="row"><button type="button" class="secondary" id="copyApiUrl">Sao chép URL</button><button type="button" class="secondary" id="copyApiBody">Sao chép JSON</button></p></div>
+<div><label>Header bắt buộc</label><div class="codeBlock">Authorization: Bearer &lt;API_TOKEN_CUA_BAN&gt;\nContent-Type: application/json</div>
+<label style="margin-top:18px">Cấu hình bí mật trên ZCloudViet</label><div class="codeBlock">Tạo API Token phía trên hoặc dùng LICENSE_API_TOKEN (legacy) trong biến môi trường</div>
+<p class="small">Lấy key từ JSON trả về tại trường <b>keys</b>. Thời hạn được tính từ lần kích hoạt đầu tiên, với số ngày/giờ bạn truyền vào. Giới hạn 100 key mỗi lần gọi. Bạn có thể thu hồi API token bất cứ lúc nào mà không phải deploy lại.</p></div></div>
+<div id="apiMsg" class="small" role="status" aria-live="polite"></div>
+</section>'''
+ADMIN_HTML = ADMIN_HTML.replace('</main><script>', AUTO_API_PANEL + '</div></main><script>', 1)
+ADMIN_TABS_JS = r'''
+const allowedTabs=['branding','publisher','keys'];
+function showAdminTab(name, push=true){
+  if(!allowedTabs.includes(name))name='branding';
+  for(const view of allowedTabs){
+    const open=view===name, pane=document.getElementById('tab-'+view), btn=document.getElementById('nav-'+view);
+    pane.hidden=!open;btn.classList.toggle('active',open);btn.setAttribute('aria-selected',String(open));btn.tabIndex=open?0:-1;
+  }
+  if(push && location.hash!=='#'+name)history.replaceState(null,'','#'+name);
+}
+for(const btn of document.querySelectorAll('[data-tab]')){
+  btn.onclick=()=>showAdminTab(btn.dataset.tab);
+  btn.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();
+    const current=allowedTabs.indexOf(btn.dataset.tab),move=e.key==='ArrowRight'?1:-1;
+    const next=allowedTabs[(current+move+allowedTabs.length)%allowedTabs.length];showAdminTab(next);document.getElementById('nav-'+next).focus()};
+}
+window.addEventListener('hashchange',()=>showAdminTab(location.hash.slice(1),false));
+showAdminTab(location.hash.slice(1),false);
+async function loadLicenseApiStatus(){
+  const label=document.getElementById('apiStatus'),dot=document.getElementById('apiDot');
+  try{
+    const status=await asJSON('/api/admin/license-api/status',{headers:{'X-CSRF-Token':csrf}});
+    label.textContent=status.enabled?'API đang bật · '+status.active_tokens+' token hoạt động':'API chưa bật · Tạo token ở trên';
+    dot.classList.toggle('ready',status.enabled);
+  }catch(e){label.textContent='Không kiểm tra được trạng thái API';document.getElementById('apiMsg').textContent=e.message;dot.classList.remove('ready')}
+}
+const apiPath='/api/admin/licenses/auto';
+document.getElementById('refreshApi').onclick=loadLicenseApiStatus;
+document.getElementById('copyApiUrl').onclick=()=>navigator.clipboard.writeText(location.origin+apiPath);
+document.getElementById('copyApiBody').onclick=()=>navigator.clipboard.writeText(document.getElementById('autoApiBody').textContent);
+async function loadApiTokens(){
+  const root=document.getElementById('apiTokenList');
+  try{
+    const result=await asJSON('/api/admin/license-api/tokens',{headers:{'X-CSRF-Token':csrf}});
+    root.replaceChildren();
+    for(const t of result.tokens){
+      const wrapper=elem('div','','card'), bar=elem('div','','row'), label=elem('div');
+      const active=!t.revoked && t.expires_at*1000>Date.now();
+      label.append(elem('strong',t.label),elem('div',(active?'Đang hoạt động':t.revoked?'Đã thu hồi':'Hết hạn')+' · Tạo: '+new Date(t.created_at*1000).toLocaleString('vi-VN')+' · Hết hạn: '+new Date(t.expires_at*1000).toLocaleString('vi-VN'),'muted'),elem('div','Đã gọi: '+t.use_count+' · Lần cuối: '+(t.last_used_at?new Date(t.last_used_at*1000).toLocaleString('vi-VN'):'Chưa dùng'),'small'));
+      const revoke=elem('button','Thu hồi','danger');revoke.type='button';revoke.disabled=t.revoked;
+      revoke.onclick=async()=>{if(!confirm('Thu hồi API token '+t.label+'? Bot dùng token này sẽ bị từ chối ngay.'))return;
+        try{await asJSON('/api/admin/license-api/tokens/'+t.id+'/revoke',{method:'POST',headers:{'X-CSRF-Token':csrf}});await loadApiTokens();await loadLicenseApiStatus()}catch(e){alert(e.message)}};
+      bar.append(label,revoke);wrapper.append(bar);root.append(wrapper);
+    }
+    if(!result.tokens.length)root.textContent='Chưa có API Token. Hãy tạo một token ở trên.';
+  }catch(e){root.textContent=e.message}
+}
+document.getElementById('refreshApiTokens').onclick=loadApiTokens;
+document.getElementById('apiTokenForm').onsubmit=async e=>{
+  e.preventDefault();const out=document.getElementById('newApiToken'),submit=e.target.querySelector('button');
+  submit.disabled=true;
+  try{
+    const data={label:e.target.elements.label.value,days_valid:Number(e.target.elements.days_valid.value)};
+    const result=await asJSON('/api/admin/license-api/tokens',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(data)});
+    out.replaceChildren(elem('strong','API Token mới (chỉ hiển thị 1 lần):'),elem('pre',result.token));
+    const copy=elem('button','Sao chép token','secondary');copy.type='button';copy.onclick=()=>navigator.clipboard.writeText(result.token);out.append(copy);
+    await loadApiTokens();await loadLicenseApiStatus();
+  }catch(err){out.textContent=err.message}finally{submit.disabled=false}
+};
+loadApiTokens();
+loadLicenseApiStatus();
+'''
+ADMIN_HTML = ADMIN_HTML.replace('</script></body></html>', ADMIN_TABS_JS + '</script></body></html>', 1)
+# Publisher form edit should show publisher tab, not jump to hidden form.
+ADMIN_HTML = ADMIN_HTML.replace("window.scrollTo({top:0,behavior:'smooth'})", "showAdminTab('publisher');document.getElementById('tab-publisher').scrollIntoView({behavior:'smooth',block:'start'})", 1)
 
 def main():
     if len(ADMIN_PASSWORD) < 12:
