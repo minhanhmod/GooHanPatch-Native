@@ -295,6 +295,56 @@ enum PatchTransaction {
         }
     }
 
+    // Marks a stale applied journal restored ONLY when every target already
+    // matches its previously recorded original state. On any mismatch, leave
+    // the journal intact so the user may still restore from backup safely.
+    static func reconcileAlreadyRestored(
+        receipt: PatchTransactionReceipt,
+        containerResolver: (String) throws -> URL,
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        let journal = try readJournal(receipt.journalURL)
+        guard journal.schemaVersion == schemaVersion,
+              journal.transactionID == receipt.id,
+              journal.projectID == receipt.projectID,
+              journal.status == .applied else { return false }
+
+        var roots: [String: URL] = [:]
+        for record in journal.records {
+            let root: URL
+            if let known = roots[record.bundleID] {
+                root = known
+            } else {
+                root = PatchPathValidator.canonicalFileURL(try containerResolver(record.bundleID))
+                roots[record.bundleID] = root
+            }
+            guard containerFingerprint(root) == record.containerFingerprint else {
+                return false
+            }
+            let target = try PatchPathValidator.resolveContainedTargetURL(
+                relativePath: record.relativePath, containerRoot: root
+            )
+            try validateFileTarget(
+                target,
+                relativePath: record.relativePath,
+                containerRoot: root,
+                allowMissingParents: true,
+                fileManager: fileManager
+            )
+            if record.originalExisted {
+                guard let originalHash = record.originalDigest,
+                      fileManager.fileExists(atPath: target.path),
+                      try digestFile(target) == originalHash else { return false }
+            } else if fileManager.fileExists(atPath: target.path) {
+                return false
+            }
+        }
+        // Restores no file data here; the common restore path only removes
+        // empty directories created by this transaction and closes the journal.
+        try restore(receipt: receipt, containerResolver: containerResolver, fileManager: fileManager)
+        return true
+    }
+
     static func latestReceipt(
         projectID: UUID,
         backupRoot: URL,
@@ -347,6 +397,10 @@ enum PatchTransaction {
         fileManager: FileManager
     ) throws {
         var resolvedTargets: [(Record, URL)] = []
+        // A game update or self-repair can put an original file back while
+        // our transaction journal still says 'applied'. Such files need no
+        // write; unknown third-party data must NOT be silently overwritten.
+        var alreadyOriginal = Set<String>()
         for record in records {
             guard let root = roots[record.bundleID],
                   containerFingerprint(root) == record.containerFingerprint else {
@@ -360,17 +414,35 @@ enum PatchTransaction {
                 target,
                 relativePath: record.relativePath,
                 containerRoot: root,
-                allowMissingParents: !requirePatchedDigest,
+                // An externally restored package may have removed a file
+                // that this patch originally created, including parent dirs.
+                allowMissingParents: !requirePatchedDigest || !record.originalExisted,
                 fileManager: fileManager
             )
 
             if requirePatchedDigest {
-                guard fileManager.fileExists(atPath: target.path),
-                      try digestFile(target) == record.replacementDigest else {
+                let exists = fileManager.fileExists(atPath: target.path)
+                if record.originalExisted {
+                    // The original must exist again (or still be patch data).
+                    guard exists, let expected = record.originalDigest else {
+                        throw PatchPackageError.restoreFailed
+                    }
+                    let current = try digestFile(target)
+                    if current == expected {
+                        alreadyOriginal.insert(target.path)
+                    } else if current != record.replacementDigest {
+                        throw PatchPackageError.restoreFailed
+                    }
+                } else if !exists {
+                    // The patch created this file; its absence is original.
+                    alreadyOriginal.insert(target.path)
+                } else if try digestFile(target) != record.replacementDigest {
                     throw PatchPackageError.restoreFailed
                 }
             }
-            if record.originalExisted {
+            // Backups are necessary only when a write is actually required.
+            // Files already matching their original hash are safely skipped.
+            if record.originalExisted && !alreadyOriginal.contains(target.path) {
                 guard let backupFilename = record.backupFilename,
                       let expectedDigest = record.originalDigest else {
                     throw PatchPackageError.restoreFailed
@@ -385,6 +457,7 @@ enum PatchTransaction {
         }
 
         for (record, target) in resolvedTargets.reversed() {
+            if alreadyOriginal.contains(target.path) { continue }
             if record.originalExisted {
                 let backup = transactionDirectory.appendingPathComponent(record.backupFilename!)
                 try atomicCopy(backup, to: target, fileManager: fileManager)
