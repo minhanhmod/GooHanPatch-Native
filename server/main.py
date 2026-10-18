@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """GooHan Patch admin, content settings and verified file distribution. Python 3.10+."""
 import base64
+import binascii
 import hashlib
 import plistlib
 import hmac
@@ -27,6 +28,7 @@ DATA = Path(os.environ.get("DATA_DIR", ROOT / "data")).resolve()
 DB = DATA / "patches.sqlite3"
 FILES = DATA / "files"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+LICENSE_API_TOKEN = os.environ.get("LICENSE_API_TOKEN", "")
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
@@ -36,6 +38,7 @@ PATCH_MAGIC = b"3105PATCH\0"
 GAME_BUNDLES = {"free_fire": "com.dts.freefireth", "free_fire_max": "com.dts.freefiremax"}
 SESSIONS: dict[str, tuple[float, str]] = {}
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+KEY_ATTEMPTS: dict[str, list[float]] = {}
 LOCK = threading.RLock()
 DEFAULT_CONFIG = {
     "title": "GooHan Patch",
@@ -53,6 +56,12 @@ DEFAULT_CONFIG = {
     "theme_label": "Chủ đề màu",
     "empty_title": "Chưa có gói Patch",
     "empty_subtitle": "Admin chưa phát hành gói cho danh mục này.",
+    "navigation_title": "GOOHAN PATCH",
+    "hero_tagline": "ONE-TOGGLE PATCH • BACKUP & RESTORE",
+    "sync_title": "ĐỒNG BỘ TỪ ADMIN",
+    "settings_title": "GooHan • Cài đặt",
+    "server_label": "Địa chỉ máy chủ HTTPS",
+    "sync_button_label": "Đồng bộ ngay",
 }
 
 
@@ -80,6 +89,21 @@ def init_db():
             if name not in columns:
                 conn.execute(f"ALTER TABLE patches ADD COLUMN {name} {spec}")
         conn.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS license_keys (
+            id TEXT PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE, masked TEXT NOT NULL,
+            prefix TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+            duration_seconds INTEGER NOT NULL, max_devices INTEGER NOT NULL,
+            issued_at INTEGER NOT NULL, activated_at INTEGER, expires_at INTEGER,
+            revoked INTEGER NOT NULL DEFAULT 0)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS license_devices (
+            license_id TEXT NOT NULL, device_hash TEXT NOT NULL,
+            activated_at INTEGER NOT NULL,
+            PRIMARY KEY (license_id, device_hash))""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS license_sessions (
+            token_hash TEXT PRIMARY KEY, license_id TEXT NOT NULL,
+            device_hash TEXT NOT NULL, issued_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS license_sessions_key_idx ON license_sessions(license_id)")
 
 
 def db():
@@ -195,6 +219,109 @@ def convert_3105(data: bytes, password: str, game: str) -> tuple[bytes, str]:
         raise ValueError("Không thể giải mã/kiểm tra gói .3105; kiểm tra mật khẩu và định dạng") from e
 
 
+# License codes are generated from a cryptographically secure 120-bit random suffix.
+# Only SHA-256 digests are stored. Live sessions are scoped to a registered device,
+# checked against expiry and revocation on *every* protected API request.
+SESSION_SECONDS = 24 * 60 * 60
+
+def license_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def create_license_codes(prefix: str, days: int, hours: int, quantity: int,
+                         max_devices: int, note: str = "") -> list[str]:
+    prefix = prefix.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9](?:[A-Z0-9-]{0,22}[A-Z0-9])?", prefix):
+        raise ValueError("Tiền tố chỉ gồm A-Z, 0-9, gạch nối (1–24 ký tự)")
+    if not 0 <= days <= 3650 or not 0 <= hours <= 23 or days + hours == 0:
+        raise ValueError("Thời hạn phải từ 1 giờ đến 3650 ngày 23 giờ")
+    if not 1 <= quantity <= 100 or not 1 <= max_devices <= 10 or len(note) > 100:
+        raise ValueError("Số key (1–100), số máy (1–10) hoặc ghi chú không hợp lệ")
+    created = []
+    now = int(time.time())
+    with db() as conn:
+        for _ in range(quantity):
+            random_suffix = base64.b32encode(secrets.token_bytes(15)).decode("ascii").rstrip("=")
+            code = f"{prefix}-{random_suffix[:6]}-{random_suffix[6:12]}-{random_suffix[12:18]}-{random_suffix[18:]}"
+            conn.execute("""INSERT INTO license_keys
+              (id,key_hash,masked,prefix,note,duration_seconds,max_devices,issued_at)
+              VALUES (?,?,?,?,?,?,?,?)""",
+              (uuid.uuid4().hex, license_digest(code), f"{prefix}-••••-{random_suffix[-6:]}",
+               prefix, note, days*86400+hours*3600, max_devices, now))
+            created.append(code)
+        conn.commit()
+    return created
+
+
+def public_license(row):
+    return dict(id=row["id"], masked=row["masked"], prefix=row["prefix"], note=row["note"],
+                duration_seconds=row["duration_seconds"], max_devices=row["max_devices"],
+                devices=row["devices"], issued_at=row["issued_at"],
+                activated_at=row["activated_at"], expires_at=row["expires_at"],
+                revoked=bool(row["revoked"]))
+
+
+def activation_payload(row, token: str):
+    return {"ok": True, "token": token, "expires_at": row["expires_at"],
+            "server_time": int(time.time())}
+
+
+def activate_license(key: str, device: str):
+    key = key.strip().upper()
+    if not 12 <= len(key) <= 100 or not re.fullmatch(r"[A-Z0-9-]+", key):
+        raise ValueError("Key không hợp lệ")
+    if not re.fullmatch(r"[a-f0-9]{32}", device):
+        raise ValueError("Định danh thiết bị không hợp lệ")
+    key_hash, device_hash = license_digest(key), license_digest(device)
+    now = int(time.time())
+    with db() as conn:
+        # Immediate transactions serialize concurrent first-device activations.
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM license_keys WHERE key_hash=?", (key_hash,)).fetchone()
+        if row is None or row["revoked"]:
+            raise PermissionError("Key không tồn tại hoặc đã bị thu hồi")
+        expires = row["expires_at"]
+        if expires is not None and expires <= now:
+            raise PermissionError("Key đã hết hạn")
+        prior = conn.execute("SELECT 1 FROM license_devices WHERE license_id=? AND device_hash=?",
+                             (row["id"],device_hash)).fetchone()
+        if prior is None:
+            count = conn.execute("SELECT COUNT(*) FROM license_devices WHERE license_id=?",(row["id"],)).fetchone()[0]
+            if count >= row["max_devices"]:
+                raise PermissionError("Key đã đạt số thiết bị tối đa")
+            conn.execute("INSERT INTO license_devices VALUES (?,?,?)",(row["id"],device_hash,now))
+        if expires is None:
+            expires = now + row["duration_seconds"]
+            conn.execute("UPDATE license_keys SET activated_at=?,expires_at=? WHERE id=?",
+                         (now,expires,row["id"]))
+        token = secrets.token_urlsafe(40)
+        conn.execute("INSERT INTO license_sessions VALUES (?,?,?,?,?)",
+                     (license_digest(token),row["id"],device_hash,now,min(expires,now+SESSION_SECONDS)))
+        conn.execute("DELETE FROM license_sessions WHERE expires_at<=?",(now,))
+        conn.commit()
+    return {"ok":True,"token":token,"expires_at":expires,"server_time":now}
+
+
+def check_license_token(header: str):
+    if not header.startswith("Bearer ") or len(header) > 400:
+        return None
+    token = header[7:].strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{30,150}", token):
+        return None
+    now = int(time.time())
+    with db() as conn:
+        row = conn.execute("""SELECT k.id,k.expires_at,k.revoked,s.expires_at as session_expiry,
+                 s.device_hash FROM license_sessions s
+                 JOIN license_keys k ON k.id=s.license_id
+                 JOIN license_devices d ON d.license_id=k.id AND d.device_hash=s.device_hash
+                 WHERE s.token_hash=?""", (license_digest(token),)).fetchone()
+    if row is None or row["revoked"] or row["expires_at"] is None:
+        return None
+    if row["expires_at"] <= now or row["session_expiry"] <= now:
+        return None
+    return {"license_id":row["id"],"expires_at":row["expires_at"],"server_time":now}
+
+
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "GooHanPatch/2.0"
 
@@ -244,6 +371,20 @@ class RequestHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def require_license(self):
+        status = check_license_token(self.headers.get("Authorization", ""))
+        if status is None:
+            self.error_json(401, "Key hết hạn, bị thu hồi hoặc phiên đăng nhập không hợp lệ")
+        return status
+
+    def read_json(self, limit=8192):
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            raise ValueError("Cần Content-Type application/json")
+        value = json.loads(self.read_body(limit))
+        if not isinstance(value, dict):
+            raise ValueError("Cần đối tượng JSON")
+        return value
+
     def read_body(self, max_length=MAX_FILE + 262144):
         try:
             length = int(self.headers.get("Content-Length", "-1"))
@@ -289,6 +430,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             return self.reply(200, {"ok": True})
         if path == "/api/config":
             return self.reply(200, public_config())
+        if path == "/api/license/status":
+            status = self.require_license()
+            if status is not None:
+                return self.reply(200, {"ok": True, **status})
+            return
+        if path == "/api/admin/licenses":
+            if not self.require_admin(): return
+            with db() as conn:
+                rows = conn.execute("""SELECT k.*,
+                   (SELECT COUNT(*) FROM license_devices d WHERE d.license_id=k.id) AS devices
+                   FROM license_keys k ORDER BY issued_at DESC LIMIT 2000""").fetchall()
+            return self.reply(200,{"licenses":[public_license(r) for r in rows]})
         if path == "/api/admin/patches":
             if not self.require_admin():
                 return
@@ -296,6 +449,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 rows = conn.execute("SELECT * FROM patches ORDER BY sort_order, created_at DESC").fetchall()
             return self.reply(200, {"patches": [patch_to_public(r) for r in rows]})
         if path == "/api/patches":
+            if not self.require_license(): return
             game = parse_qs(parsed.query).get("game", [""])[0]
             if game and game not in ("free_fire", "free_fire_max"):
                 return self.error_json(400, "Game không hợp lệ")
@@ -306,6 +460,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     rows = conn.execute("SELECT * FROM patches WHERE enabled=1 ORDER BY sort_order, created_at DESC").fetchall()
             return self.reply(200, {"patches": [patch_to_public(r) for r in rows]})
         if path.startswith("/downloads/"):
+            if not self.require_license(): return
             patch_id = path.removeprefix("/downloads/")
             if not re.fullmatch("[0-9a-f]{32}", patch_id):
                 return self.error_json(404, "Không có tệp")
@@ -331,6 +486,71 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/license/activate":
+            try:
+                data = self.read_json(4096)
+                if set(data) != {"key", "device_id"}:
+                    raise ValueError("Thiếu key hoặc mã thiết bị")
+                key, device = data["key"], data["device_id"]
+                if not isinstance(key,str) or not isinstance(device,str):
+                    raise ValueError("Key hoặc mã thiết bị không hợp lệ")
+                client = self.client_address[0]
+                with LOCK:
+                    recent = [t for t in KEY_ATTEMPTS.get(client,[]) if t > time.time()-900]
+                    if len(recent)>=20:
+                        return self.error_json(429,"Thử quá nhiều lần, chờ 15 phút")
+                    KEY_ATTEMPTS[client] = recent
+                response = activate_license(key,device)
+                return self.reply(200,response)
+            except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
+                with LOCK: KEY_ATTEMPTS.setdefault(self.client_address[0],[]).append(time.time())
+                return self.error_json(400,str(exc))
+            except PermissionError as exc:
+                with LOCK: KEY_ATTEMPTS.setdefault(self.client_address[0],[]).append(time.time())
+                return self.error_json(403,str(exc))
+        if path == "/api/admin/licenses/auto":
+            # Optional integration for bots/other admin services. Disabled unless
+            # the admin sets a strong random token in ZCloudViet environment.
+            candidate = self.headers.get("Authorization", "")
+            if (len(LICENSE_API_TOKEN) < 32 or len(candidate) > 256 or
+                not hmac.compare_digest(candidate, "Bearer " + LICENSE_API_TOKEN)):
+                return self.error_json(403, "API token không hợp lệ")
+            try:
+                form = self.read_json(8192)
+                if not set(form).issubset({"prefix","days","hours","quantity","max_devices","note"}):
+                    raise ValueError("Trường không hợp lệ")
+                codes = create_license_codes(str(form["prefix"]), int(form["days"]), int(form["hours"]),
+                                             int(form.get("quantity",1)), int(form.get("max_devices",1)),
+                                             str(form.get("note","")))
+                return self.reply(200,{"ok":True,"keys":codes})
+            except (ValueError,KeyError,TypeError) as exc:
+                return self.error_json(400,str(exc))
+        if path == "/api/admin/licenses":
+            if not self.require_admin(): return
+            try:
+                form = self.read_json(8192)
+                if not set(form).issubset({"prefix","days","hours","quantity","max_devices","note"}):
+                    raise ValueError("Trường không hợp lệ")
+                codes = create_license_codes(str(form["prefix"]),int(form["days"]),int(form["hours"]),
+                                               int(form.get("quantity",1)),int(form.get("max_devices",1)),
+                                               str(form.get("note","")))
+                return self.reply(200,{"ok":True,"keys":codes,
+                                       "info":"Hãy lưu key ngay; hệ thống chỉ lưu mã băm"})
+            except (ValueError,KeyError,TypeError) as exc:
+                return self.error_json(400,str(exc))
+        if re.fullmatch(r"/api/admin/licenses/[0-9a-f]{32}/(revoke|reset-devices)",path):
+            if not self.require_admin(): return
+            license_id, action = path.split("/")[4:6]
+            with db() as conn:
+                if conn.execute("SELECT 1 FROM license_keys WHERE id=?",(license_id,)).fetchone() is None:
+                    return self.error_json(404,"Không tìm thấy key")
+                if action=="revoke":
+                    conn.execute("UPDATE license_keys SET revoked=1 WHERE id=?",(license_id,))
+                else:
+                    conn.execute("DELETE FROM license_devices WHERE license_id=?",(license_id,))
+                conn.execute("DELETE FROM license_sessions WHERE license_id=?",(license_id,))
+                conn.commit()
+            return self.reply(200,{"ok":True})
         if path == "/login":
             with LOCK:
                 ip = self.client_address[0]
@@ -528,7 +748,7 @@ ADMIN_HTML = """<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta
 <section class="panel"><span class="tag">03 / LIBRARY</span><div class="row"><h2>Gói Patch đã tạo</h2><button class="secondary" id="refresh">Làm mới</button></div><div id="list" class="muted"></div></section>
 </main><script>
 const csrf=document.querySelector('meta[name="csrf-token"]').content;
-const configFields={title:'Tên hiển thị trong ứng dụng',kicker:'Chữ nhỏ đầu trang',subtitle:'Mô tả ở trang chính',notice:'Thông báo quan trọng',footer:'Nội dung chân trang',accent_hex:'Màu chủ đạo (#RRGGBB)',free_fire_name:'Tên danh mục Free Fire',free_fire_max_name:'Tên danh mục Free Fire MAX',apply_label:'Nhãn bật Patch',restore_label:'Nhãn tắt Patch',support_url:'Link hỗ trợ (HTTPS)',section_label:'Tiêu đề khu vực thư viện',theme_label:'Tiêu đề trang chọn màu',empty_title:'Tiêu đề danh sách trống',empty_subtitle:'Mô tả danh sách trống'};
+const configFields={title:'Tên hiển thị trong ứng dụng',kicker:'Chữ nhỏ đầu trang',subtitle:'Mô tả ở trang chính',notice:'Thông báo quan trọng',footer:'Nội dung chân trang',accent_hex:'Màu chủ đạo (#RRGGBB)',free_fire_name:'Tên danh mục Free Fire',free_fire_max_name:'Tên danh mục Free Fire MAX',apply_label:'Nhãn bật Patch',restore_label:'Nhãn tắt Patch',support_url:'Link hỗ trợ (HTTPS)',section_label:'Tiêu đề khu vực thư viện',theme_label:'Tiêu đề trang chọn màu',empty_title:'Tiêu đề danh sách trống',empty_subtitle:'Mô tả danh sách trống',navigation_title:'Chữ trên thanh điều hướng',hero_tagline:'Khẩu hiệu ở đầu trang',sync_title:'Tiêu đề ô đồng bộ',settings_title:'Tên màn hình Cài đặt',server_label:'Nhãn địa chỉ máy chủ',sync_button_label:'Tên nút đồng bộ trong Cài đặt'};
 const form=document.getElementById('form'),msg=document.getElementById('msg');let editing=null,patches=[];
 const colors=['#FF4554','#DC2747','#FF589C','#F78CBF','#FF756A','#FF9248','#F5AE37','#F5D54A','#BEDC4C','#54D96C','#1DCB82','#73E4BA','#36C2B1','#43D5E8','#68BDF6','#438CF5','#566CF3','#7371F6','#A36AF6','#C394FC','#D06ED3','#C99162','#9BAABD','#E3EBFA'];
 const palette=document.getElementById('palette');for(const hex of colors){const b=document.createElement('button');b.type='button';b.className='swatch';b.style.background=hex;b.dataset.hex=hex;b.title=hex;b.setAttribute('aria-label','Chọn màu '+hex);b.onclick=()=>{const field=document.querySelector('[name="accent_hex"]');if(field){field.value=hex;palette.querySelectorAll('.swatch').forEach(v=>v.classList.toggle('selected',v===b))}};palette.append(b)}
@@ -548,9 +768,16 @@ loadSettings().catch(e=>document.getElementById('configmsg').textContent=e.messa
 </script></body></html>"""
 
 
+# Inject the admin licensing panel into the existing self-contained UI.
+ADMIN_HTML = ADMIN_HTML.replace("</main><script>", '\n<section class="panel" id="licensePanel"><span class="tag">04 / LICENSE KEYS</span>\n<h2>Quản lý License Key</h2><p class="muted">Tạo key theo tiền tố, thời hạn ngày/giờ tính từ lần kích hoạt đầu tiên. Chỉ Admin được tạo và thu hồi; key gốc chỉ hiển thị một lần.</p>\n<form id="licenseForm"><div class="grid">\n<div><label>Tiền tố Key (A–Z, 0–9, -)</label><input name="prefix" value="GOOHAN" maxlength="24" required></div>\n<div><label>Số ngày</label><input type="number" name="days" value="7" min="0" max="3650" required></div>\n<div><label>Số giờ (0–23)</label><input type="number" name="hours" value="0" min="0" max="23" required></div>\n<div><label>Số lượng Key (1–100)</label><input type="number" name="quantity" value="1" min="1" max="100" required></div>\n<div><label>Số thiết bị / Key</label><input type="number" name="max_devices" value="1" min="1" max="10" required></div>\n<div><label>Ghi chú</label><input name="note" maxlength="100" placeholder="Đợt phát hành / khách hàng"></div>\n</div><p class="row"><span class="small">Không lưu key gốc vào cơ sở dữ liệu.</span><button type="submit">Tạo Key mới</button></p></form>\n<div id="licenseResult" class="small" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>\n<p class="row"><h3>Key đã tạo</h3><button type="button" class="secondary" id="refreshLicenses">Làm mới</button></p>\n<div id="licenseList"></div></section>\n'+"</main><script>")
+ADMIN_HTML = ADMIN_HTML.replace("</script></body></html>", "\nasync function loadLicenses(){const root=document.getElementById('licenseList');try{\nconst j=await asJSON('/api/admin/licenses',{headers:{'X-CSRF-Token':csrf}});root.replaceChildren();\nfor(const k of j.licenses){const card=elem('div','','card');const bar=elem('div','','row');\nconst left=elem('div');left.append(elem('strong',k.masked),elem('div',((k.duration_seconds/3600).toFixed(1))+' giờ · '+k.devices+'/'+k.max_devices+' máy · '+(k.revoked?'Đã thu hồi':(k.expires_at&&k.expires_at*1000<Date.now()?'Hết hạn':'Đang sử dụng / chưa kích hoạt')),'muted'));\nif(k.note)left.append(elem('div',k.note,'muted'));\nconst ops=elem('div');const rev=elem('button','Thu hồi','danger');rev.disabled=k.revoked;\nrev.onclick=async()=>{if(!confirm('Thu hồi key này ngay?'))return;await asJSON('/api/admin/licenses/'+k.id+'/revoke',{method:'POST',headers:{'X-CSRF-Token':csrf}});await loadLicenses()};\nconst reset=elem('button','Đặt lại máy','secondary');reset.disabled=k.revoked;\nreset.onclick=async()=>{if(!confirm('Hủy mọi phiên đăng nhập và xóa thiết bị đã gắn?'))return;await asJSON('/api/admin/licenses/'+k.id+'/reset-devices',{method:'POST',headers:{'X-CSRF-Token':csrf}});await loadLicenses()};\nops.append(rev,document.createTextNode(' '),reset);bar.append(left,ops);card.append(bar);root.append(card)}\nif(!j.licenses.length)root.textContent='Chưa tạo key nào.';\n}catch(e){root.textContent=e.message}}\ndocument.getElementById('refreshLicenses').onclick=loadLicenses;\ndocument.getElementById('licenseForm').onsubmit=async e=>{e.preventDefault();const el=document.getElementById('licenseResult');\ntry{const f=Object.fromEntries(new FormData(e.target));for(const n of ['days','hours','quantity','max_devices'])f[n]=Number(f[n]);\nconst j=await asJSON('/api/admin/licenses',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(f)});\nel.replaceChildren();const label=elem('p','Key vừa tạo (chỉ hiển thị lần này):');const pre=elem('pre',j.keys.join('\\n'));pre.style.whiteSpace='pre-wrap';pre.style.userSelect='all';\nconst copy=elem('button','Sao chép Key','secondary');copy.type='button';copy.onclick=()=>navigator.clipboard.writeText(j.keys.join('\\n'));\nel.append(label,pre,copy);await loadLicenses();\n}catch(err){el.textContent=err.message}};\nloadLicenses();\n"+"</script></body></html>")
+
+
 def main():
     if len(ADMIN_PASSWORD) < 12:
         raise SystemExit("Thiết lập ADMIN_PASSWORD ít nhất 12 ký tự trước khi chạy.")
+    if LICENSE_API_TOKEN and len(LICENSE_API_TOKEN) < 32:
+        raise SystemExit("LICENSE_API_TOKEN cần tối thiểu 32 ký tự hoặc để trống.")
     init_db()
     server = ThreadingHTTPServer((HOST, PORT), RequestHandler)
     print(f"GooHan Patch Admin listening on {HOST}:{PORT}; storage={DATA}", flush=True)
