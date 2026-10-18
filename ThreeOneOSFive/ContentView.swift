@@ -16,12 +16,31 @@ private struct GooPatch: Codable, Identifiable, Hashable {
     let description: String
 }
 private struct GooResponse: Decodable { let patches: [GooPatch] }
-private struct GooConfig: Decodable {
-    let title: String
-    let subtitle: String
-    let notice: String
-    let freeFireName: String
-    let freeFireMaxName: String
+// Every field is optional so a partially updated Admin server does not
+// prevent the iPhone from applying all other available content updates.
+private struct GooConfig: Codable {
+    let title: String?
+    let kicker: String?
+    let subtitle: String?
+    let notice: String?
+    let footer: String?
+    let accentHex: String?
+    let freeFireName: String?
+    let freeFireMaxName: String?
+    let applyLabel: String?
+    let restoreLabel: String?
+    let supportUrl: String?
+    let sectionLabel: String?
+    let themeLabel: String?
+    let emptyTitle: String?
+    let emptySubtitle: String?
+    // Additional editable text; absent on older Admin deployments.
+    let navigationTitle: String?
+    let heroTagline: String?
+    let syncTitle: String?
+    let settingsTitle: String?
+    let serverLabel: String?
+    let syncButtonLabel: String?
 }
 private struct GooPlan: Codable {
     struct Rule: Codable {
@@ -100,6 +119,18 @@ private enum GooCache {
         guard let url = try? path("catalog.json"), let d = try? JSONEncoder().encode(items) else { return }
         try? d.write(to: url, options: .atomic)
     }
+    static func loadConfig() -> GooConfig? {
+        guard let url = try? path("config.json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(GooConfig.self, from: data)
+    }
+    static func saveConfig(_ config: GooConfig) {
+        guard let url = try? path("config.json"),
+              let data = try? JSONEncoder().encode(config) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
     static func readPlan(_ id: String) -> GooPlan? {
         guard let url = try? path("plan_" + id + ".json"), let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
@@ -121,8 +152,23 @@ struct ContentView: View {
     @State private var game = "free_fire"
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
     @State private var title = "GooHan Patch"
+    @State private var kicker = "GOOHAN • PATCH MANAGER"
     @State private var subtitle = "Admin-managed Patch Library"
     @State private var notice = "Tự động áp dụng khi thiết bị có quyền truy cập phù hợp."
+    @State private var footer = "Chỉ báo thành công khi tác vụ ghi/khôi phục trả về kết quả hợp lệ."
+    @State private var navigationTitle = "GOOHAN PATCH"
+    @State private var heroTagline = "ONE-TOGGLE PATCH • BACKUP & RESTORE"
+    @State private var syncTitle = "ĐỒNG BỘ TỪ ADMIN"
+    @State private var sectionLabel = "THƯ VIỆN PATCH"
+    @State private var themeLabel = "24 màu giao diện"
+    @State private var emptyTitle = "Chưa có gói Patch"
+    @State private var emptySubtitle = "Kiểm tra Admin và nhấn đồng bộ."
+    @State private var applyLabel = "Bật Patch"
+    @State private var restoreLabel = "Tắt & Khôi phục"
+    @State private var supportUrl = ""
+    @State private var settingsTitle = "GooHan • Cài đặt"
+    @State private var serverLabel = "Địa chỉ máy chủ HTTPS"
+    @State private var syncButtonLabel = "Đồng bộ ngay"
     @State private var ffName = "Free Fire"
     @State private var maxName = "Free Fire MAX"
     @State private var busyId: String?
@@ -144,7 +190,7 @@ struct ContentView: View {
                     gamePicker
                     infoCard
                     HStack {
-                        Label("THƯ VIỆN PATCH", systemImage: "square.stack.3d.up")
+                        Label(sectionLabel, systemImage: "square.stack.3d.up")
                             .font(.system(size: 12, weight: .heavy, design: .monospaced))
                         Spacer()
                         Text("\(visible.count) gói").foregroundColor(.white.opacity(0.55))
@@ -153,8 +199,8 @@ struct ContentView: View {
                     if visible.isEmpty {
                         card {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Chưa có gói Patch").font(.headline)
-                                Text("Kiểm tra Admin và nhấn đồng bộ.")
+                                Text(emptyTitle).font(.headline)
+                                Text(emptySubtitle)
                                     .font(.footnote).foregroundColor(.white.opacity(0.56))
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -166,7 +212,7 @@ struct ContentView: View {
                             Text(message).font(.footnote).foregroundColor(.white.opacity(0.8))
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text("Chỉ báo thành công khi tác vụ ghi/khôi phục trả về kết quả hợp lệ.")
+                    Text(footer)
                         .font(.caption2).foregroundColor(.white.opacity(0.44))
                         .frame(maxWidth: .infinity, alignment: .center)
                         .multilineTextAlignment(.center).padding(.vertical, 14)
@@ -176,9 +222,16 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 5) {
-                        Text("GOOHAN").fontWeight(.black).foregroundColor(color)
-                        Text("PATCH").fontWeight(.medium)
+                    Group {
+                        if navigationTitle == "GOOHAN PATCH" {
+                            HStack(spacing: 5) {
+                                Text("GOOHAN").fontWeight(.black).foregroundColor(color)
+                                Text("PATCH").fontWeight(.medium)
+                            }
+                        } else {
+                            Text(navigationTitle).fontWeight(.black).foregroundColor(color)
+                                .lineLimit(1).minimumScaleFactor(0.65)
+                        }
                     }.font(.system(size: 15, design: .rounded))
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -191,7 +244,10 @@ struct ContentView: View {
         .navigationViewStyle(.stack)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) { settingsView }
-        .task { await sync() }
+        .task {
+            if let saved = GooCache.loadConfig() { applyConfig(saved) }
+            await sync()
+        }
     }
 
     private var header: some View {
@@ -199,7 +255,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Circle().fill(color).frame(width: 8, height: 8)
-                    Text("GOOHAN • PATCH MANAGER")
+                    Text(kicker)
                         .font(.system(size: 10, weight: .heavy, design: .monospaced))
                         .tracking(1.5).foregroundColor(color)
                     Spacer()
@@ -207,7 +263,7 @@ struct ContentView: View {
                 }
                 Text(title).font(.system(size: 33, weight: .black, design: .rounded)).lineLimit(2)
                 Text(subtitle).font(.subheadline).foregroundColor(.white.opacity(0.62))
-                Text("ONE-TOGGLE PATCH • BACKUP & RESTORE")
+                Text(heroTagline)
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .tracking(0.4).foregroundColor(color)
             }
@@ -234,7 +290,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Image(systemName: "cloud.fill").foregroundColor(color)
-                    Text("ĐỒNG BỘ TỪ ADMIN")
+                    Text(syncTitle)
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                     Spacer()
                     if syncing { ProgressView().tint(color) }
@@ -263,6 +319,9 @@ struct ContentView: View {
                         Text(patch.description).font(.caption2)
                             .foregroundColor(.white.opacity(0.46)).lineLimit(2)
                     }
+                    Text(active ? restoreLabel : applyLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(color.opacity(0.8))
                 }
                 Spacer(minLength: 3)
                 if busyId == patch.id { ProgressView().tint(color) }
@@ -272,6 +331,7 @@ struct ContentView: View {
                         set: { newValue in Task { await toggle(patch, on: newValue) } }
                     ))
                     .labelsHidden().tint(color).disabled(busyId != nil)
+                    .accessibilityLabel(active ? restoreLabel : applyLabel)
                 }
             }
         }
@@ -285,11 +345,11 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Địa chỉ máy chủ HTTPS").font(.headline)
+                    Text(serverLabel).font(.headline)
                     TextField("https://...", text: $serverURL)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .keyboardType(.URL).textFieldStyle(.roundedBorder)
-                    Text("24 màu giao diện").font(.headline)
+                    Text(themeLabel).font(.headline)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 16) {
                         ForEach(0..<GooPalette.all.count, id: \.self) { index in
                             let item = GooPalette.all[index]
@@ -299,15 +359,19 @@ struct ContentView: View {
                             }.accessibilityLabel(item.0)
                         }
                     }
+                    if let link = URL(string: supportUrl), link.scheme == "https" {
+                        Link("Hỗ trợ", destination: link)
+                            .font(.subheadline).foregroundColor(color)
+                    }
                     Text("Bản này chỉ có thể thao tác với dữ liệu khi iOS thực sự cấp quyền. Không có thao tác chọn thư mục; nếu không đủ quyền, công tắc sẽ giữ trạng thái OFF và hiển thị lỗi.")
                         .font(.footnote).foregroundColor(.secondary)
-                    Button("Đồng bộ ngay") {
+                    Button(syncButtonLabel) {
                         showSettings = false
                         Task { await sync() }
                     }.buttonStyle(.borderedProminent).tint(color)
                 }.padding(20)
             }
-            .navigationTitle("GooHan • Cài đặt")
+            .navigationTitle(settingsTitle)
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button("Xong") { showSettings = false }
             }}
@@ -336,17 +400,49 @@ struct ContentView: View {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
     }
+    private func applyConfig(_ cfg: GooConfig) {
+        title = cfg.title ?? title
+        kicker = cfg.kicker ?? kicker
+        subtitle = cfg.subtitle ?? subtitle
+        notice = cfg.notice ?? notice
+        footer = cfg.footer ?? footer
+        navigationTitle = cfg.navigationTitle ?? navigationTitle
+        heroTagline = cfg.heroTagline ?? heroTagline
+        syncTitle = cfg.syncTitle ?? syncTitle
+        sectionLabel = cfg.sectionLabel ?? sectionLabel
+        themeLabel = cfg.themeLabel ?? themeLabel
+        emptyTitle = cfg.emptyTitle ?? emptyTitle
+        emptySubtitle = cfg.emptySubtitle ?? emptySubtitle
+        applyLabel = cfg.applyLabel ?? applyLabel
+        restoreLabel = cfg.restoreLabel ?? restoreLabel
+        supportUrl = cfg.supportUrl ?? supportUrl
+        settingsTitle = cfg.settingsTitle ?? settingsTitle
+        serverLabel = cfg.serverLabel ?? serverLabel
+        syncButtonLabel = cfg.syncButtonLabel ?? syncButtonLabel
+        ffName = cfg.freeFireName ?? ffName
+        maxName = cfg.freeFireMaxName ?? maxName
+        if UserDefaults.standard.object(forKey: "GooHanThemeHex") == nil,
+           let hex = cfg.accentHex,
+           hex.range(of: "^#[A-Fa-f0-9]{6}$", options: .regularExpression) != nil {
+            themeHex = hex
+        }
+    }
     private func sync() async {
         if syncing { return }
         syncing = true
         defer { syncing = false }
         do {
             let base = try baseURL()
-            let cfg = try? jsonDecoder().decode(GooConfig.self,
-                                                from: await getData(base.appendingPathComponent("api/config")))
-            if let cfg {
-                title = cfg.title; subtitle = cfg.subtitle; notice = cfg.notice
-                ffName = cfg.freeFireName; maxName = cfg.freeFireMaxName
+            // A configuration read error must be visible, not silently ignored.
+            // Patches still sync even when the branding endpoint is unavailable.
+            var configWarning: String?
+            do {
+                let payload = try await getData(base.appendingPathComponent("api/config"))
+                let cfg = try jsonDecoder().decode(GooConfig.self, from: payload)
+                applyConfig(cfg)
+                GooCache.saveConfig(cfg)
+            } catch {
+                configWarning = "Không tải được nội dung từ Admin: \(error.localizedDescription)"
             }
             var incoming: [GooPatch] = []
             for key in ["free_fire", "free_fire_max"] {
@@ -362,7 +458,8 @@ struct ContentView: View {
             }
             catalog = incoming + activeMissing
             GooCache.saveCatalog(catalog)
-            message = "Đã đồng bộ \(incoming.count) gói từ Admin."
+            message = "Đã đồng bộ \(incoming.count) gói từ Admin." +
+                      (configWarning.map { " \($0)" } ?? "")
         } catch {
             message = "Lỗi đồng bộ: \(error.localizedDescription). Các gói đang bật vẫn được giữ để khôi phục."
         }
