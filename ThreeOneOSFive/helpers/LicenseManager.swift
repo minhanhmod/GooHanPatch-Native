@@ -157,7 +157,15 @@ final class LicenseManager: ObservableObject {
         save(value, for: deviceAccount)
         return value
     }
-    private struct ActivationRequest: Encodable { let key: String; let deviceId: String }
+    // JSON must use `device_id`: the server deliberately rejects extra/missing keys.
+    private struct ActivationRequest: Encodable {
+        let key: String
+        let deviceId: String
+        enum CodingKeys: String, CodingKey {
+            case key
+            case deviceId = "device_id"
+        }
+    }
     private struct LicenseReply: Decodable {
         let ok: Bool
         let token: String?
