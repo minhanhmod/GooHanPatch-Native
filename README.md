@@ -1,7 +1,12 @@
-# GooHan Patch v5.2 — experimental native engine
+# GooHan Patch Native v5.4 – Server-side License
 
-Experimental rework using original 3105 patch models and transactional backup/restore, retaining GooHan-style UI, 24-color selector and Admin v5 web service.
+Source includes modified components originally based on YangJiiii/3105 (GPL-3.0); see LICENSE and CREDITS_AND_LICENSE.md.
 
-This source is **not yet compiled or field-tested on iOS**. Automatic patching of third-party app data depends on permissions; the engine checks access before reporting success and does not auto-run a kernel exploit on app launch. Server-supplied plans must target an expected Free Fire bundle ID and are verified for integrity.
+- Native iOS client: ThreeOneOSFive
+- Backend & Web Admin: server/main.py
+- Tests: tests/
+- GitHub Actions IPA build: .github/workflows/build-goohan-ipa.yml
 
-See `CREDITS_AND_LICENSE.md` and `LICENSE` for GPL information.
+Security: server-side activation, expiry, revocation, per-device limits and authenticated patch distribution. No client-only key comparison. Session and activation key stored in iOS Keychain. Offline access to new patch packages is disabled. Local restore of prior patch state remains available after license expiry.
+
+No IPA can be made impossible to reverse-engineer. Licensing limits online services, not what a fully modified local client can display. App Attest, if added in future, requires compatible Apple entitlements and valid provisioning.
