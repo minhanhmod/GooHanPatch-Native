@@ -32,6 +32,23 @@ enum DevicePatchService {
         }
     }
 
+    // Reconcile stale applied receipts when the game/app itself has already
+    // restored the original files. Does not reapply or bypass file permissions.
+    static func reconcileAlreadyRestored(receipt: PatchTransactionReceipt) throws -> Bool {
+        let bundleIDs = try PatchTransaction.requiredBundleIdentifiers(for: receipt)
+        return try withResolvedContainers(bundleIDs: bundleIDs) { roots in
+            try PatchTransaction.reconcileAlreadyRestored(
+                receipt: receipt,
+                containerResolver: { bundleID in
+                    guard let root = roots[bundleID] else {
+                        throw PatchPackageError.targetAppUnavailable(bundleID)
+                    }
+                    return root
+                }
+            )
+        }
+    }
+
     static func latestReceipt(projectID: UUID) -> PatchTransactionReceipt? {
         guard let backupRoot = try? PatchProjectLibrary.backupRootURL() else { return nil }
         return PatchTransaction.latestReceipt(projectID: projectID, backupRoot: backupRoot)
