@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import UIKit
 
 @main
@@ -30,8 +31,12 @@ struct ThreeOneOSFiveApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                ContentView()
-                    .environmentObject(licenseManager)
+                if licenseManager.isActive {
+                    ContentView()
+                        .environmentObject(licenseManager)
+                } else {
+                    LicenseActivationView(manager: licenseManager)
+                }
             }
                 .environmentObject(appState)
                 .environmentObject(patchDraftCoordinator)
@@ -54,6 +59,11 @@ struct ThreeOneOSFiveApp: App {
                 licenseManager.beginLaunchSession()
                 appState.detectSupport()
                 checkForUpdate()
+            }
+            .onReceive(Timer.publish(every: 120, on: .main, in: .common).autoconnect()) { _ in
+                if scenePhase == .active && licenseManager.isActive {
+                    licenseManager.beginLaunchSession()
+                }
             }
             .onChange(of: scenePhase) { phase in
                 guard phase == .active else { return }

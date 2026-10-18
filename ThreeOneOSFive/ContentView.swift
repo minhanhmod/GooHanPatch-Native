@@ -147,6 +147,7 @@ private enum GooCache {
 }
 
 struct ContentView: View {
+    @EnvironmentObject private var licenseManager: LicenseManager
     // The endpoint remains connected but is not exposed in the user settings UI.
     // This URL is public configuration, NOT a password or secret.
     private let serverURL = "https://gohanpatch-adminpatch.zcloudviet.xyz"
@@ -371,6 +372,12 @@ struct ContentView: View {
                     }
                     Text("Bản này chỉ có thể thao tác với dữ liệu khi iOS thực sự cấp quyền. Không có thao tác chọn thư mục; nếu không đủ quyền, công tắc sẽ giữ trạng thái OFF và hiển thị lỗi.")
                         .font(.footnote).foregroundColor(.secondary)
+                    if let expiry = licenseManager.expirationDate {
+                        Text("License có hiệu lực đến: \(expiry.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.footnote).foregroundColor(.secondary)
+                    }
+                    Button("Đăng xuất License") { licenseManager.deactivate() }
+                        .foregroundColor(.orange)
                     Button(syncButtonLabel) {
                         showSettings = false
                         Task { await sync() }
@@ -391,15 +398,7 @@ struct ContentView: View {
         return url
     }
     private func getData(_ url: URL) async throws -> Data {
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 25
-        req.cachePolicy = .reloadIgnoringLocalCacheData
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw GooError.message("Máy chủ không trả HTTP 200")
-        }
-        guard data.count <= 80 * 1024 * 1024 else { throw GooError.message("Dữ liệu quá lớn") }
-        return data
+        try await licenseManager.authenticatedData(from: url)
     }
     private func jsonDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
@@ -520,6 +519,7 @@ struct ContentView: View {
         defer { busyId = nil; redrawReceipt += 1 }
         do {
             if on {
+                try await licenseManager.ensureAuthorized()
                 guard !GooCache.hasReceipt(for: patch) else { return }
                 guard patch.enabled, patch.packageFormat == "3105" else {
                     throw GooError.message("Chỉ hỗ trợ gói .3105 đang được Admin xuất bản")
@@ -563,5 +563,57 @@ struct ContentView: View {
         } catch {
             message = "Không thể \(on ? "bật" : "tắt") \(patch.feature): \(error.localizedDescription)"
         }
+    }
+}
+
+// Available even when a key expires. Restoring the original files never
+// needs a server session, so an expired/revoked key cannot trap an active Patch.
+struct GooHanRecoveryPanel: View {
+    @State private var result = ""
+    @State private var busy = false
+    @State private var refreshID = UUID()
+
+    private var recoverable: [GooPatch] {
+        _ = refreshID
+        return GooCache.loadCatalog().filter { GooCache.hasReceipt(for: $0) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                Text("Khôi phục tệp gốc")
+            }.font(.headline)
+            Text("Ngay cả khi key đã hết hạn, bạn vẫn có thể khôi phục những gói đã bật trên thiết bị này.")
+                .font(.caption).foregroundColor(.white.opacity(0.65))
+            ForEach(recoverable) { patch in
+                Button("Khôi phục \(patch.feature)") {
+                    guard !busy else { return }
+                    busy = true
+                    Task {
+                        defer { busy = false; refreshID = UUID() }
+                        do {
+                            guard let plan = GooCache.readPlan(patch.id),
+                                  let id = UUID(uuidString: plan.packageId),
+                                  let receipt = DevicePatchService.latestReceipt(projectID: id) else { return }
+                            try await Task.detached(priority: .userInitiated) {
+                                try DevicePatchService.restore(receipt: receipt)
+                            }.value
+                            result = "Đã khôi phục \(patch.feature)"
+                        } catch { result = error.localizedDescription }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+            }
+            if recoverable.isEmpty {
+                Text("Không có bản Patch nào cần khôi phục.")
+                    .font(.caption).foregroundColor(.white.opacity(0.4))
+            }
+            if !result.isEmpty { Text(result).font(.caption).foregroundColor(.orange) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color(red: 0.09, green: 0.11, blue: 0.16), in: RoundedRectangle(cornerRadius: 22))
     }
 }
