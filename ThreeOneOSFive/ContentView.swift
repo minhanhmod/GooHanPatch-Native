@@ -147,7 +147,9 @@ private enum GooCache {
 }
 
 struct ContentView: View {
-    @AppStorage("GooHanServerURL") private var serverURL = "https://gohanpatch-adminpatch.zcloudviet.xyz"
+    // The endpoint remains connected but is not exposed in the user settings UI.
+    // This URL is public configuration, NOT a password or secret.
+    private let serverURL = "https://gohanpatch-adminpatch.zcloudviet.xyz"
     @AppStorage("GooHanThemeHex") private var themeHex = "#FF4757"
     @State private var game = "free_fire"
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
@@ -176,6 +178,8 @@ struct ContentView: View {
     @State private var message = "Đang chờ đồng bộ"
     @State private var showSettings = false
     @State private var redrawReceipt = 0
+    @State private var reconciling = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private var color: Color { Color(gooHex: themeHex) }
     private var visible: [GooPatch] {
@@ -247,6 +251,12 @@ struct ContentView: View {
         .task {
             if let saved = GooCache.loadConfig() { applyConfig(saved) }
             await sync()
+            await reconcileExternalRestores()
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                Task { await reconcileExternalRestores() }
+            }
         }
     }
 
@@ -330,7 +340,7 @@ struct ContentView: View {
                         get: { _ = redrawReceipt; return GooCache.hasReceipt(for: patch) },
                         set: { newValue in Task { await toggle(patch, on: newValue) } }
                     ))
-                    .labelsHidden().tint(color).disabled(busyId != nil)
+                    .labelsHidden().tint(color).disabled(busyId != nil || reconciling)
                     .accessibilityLabel(active ? restoreLabel : applyLabel)
                 }
             }
@@ -345,10 +355,6 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(serverLabel).font(.headline)
-                    TextField("https://...", text: $serverURL)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .keyboardType(.URL).textFieldStyle(.roundedBorder)
                     Text(themeLabel).font(.headline)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 16) {
                         ForEach(0..<GooPalette.all.count, id: \.self) { index in
@@ -481,8 +487,35 @@ struct ContentView: View {
         }
         return PatchProject(id: uuid, name: plan.name, bundleIdentifiers: [bundleID], rules: rules)
     }
+    // If another process already restored every destination to its original
+    // fingerprint, close only the stale receipt and refresh the visible switch.
+    // Divergent/unknown contents are never overwritten by this reconciliation.
+    private func reconcileExternalRestores() async {
+        guard busyId == nil && !reconciling else { return }
+        reconciling = true
+        defer { reconciling = false; redrawReceipt += 1 }
+        let snapshot = catalog
+        let count = await Task.detached(priority: .utility) { () -> Int in
+            var closed = 0
+            for patch in snapshot {
+                guard let plan = GooCache.readPlan(patch.id),
+                      let id = UUID(uuidString: plan.packageId),
+                      let receipt = DevicePatchService.latestReceipt(projectID: id) else {
+                    continue
+                }
+                if (try? DevicePatchService.reconcileAlreadyRestored(receipt: receipt)) == true {
+                    closed += 1
+                }
+            }
+            return closed
+        }.value
+        if count > 0 {
+            message = "Đã phát hiện \(count) gói được khôi phục từ bên ngoài. Công tắc đã cập nhật về OFF; có thể bật lại."
+        }
+    }
+
     private func toggle(_ patch: GooPatch, on: Bool) async {
-        guard busyId == nil else { return }
+        guard busyId == nil && !reconciling else { return }
         busyId = patch.id
         defer { busyId = nil; redrawReceipt += 1 }
         do {
@@ -525,7 +558,7 @@ struct ContentView: View {
                 guard DevicePatchService.latestReceipt(projectID: id) == nil else {
                     throw GooError.message("Khôi phục chưa hoàn tất; vẫn giữ trạng thái bật")
                 }
-                message = "Đã khôi phục bản gốc cho \(patch.feature)."
+                message = "Đã tắt \(patch.feature). Tệp đã là bản gốc hoặc đã được khôi phục từ bản sao lưu."
             }
         } catch {
             message = "Không thể \(on ? "bật" : "tắt") \(patch.feature): \(error.localizedDescription)"
