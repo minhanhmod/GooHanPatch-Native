@@ -8,8 +8,15 @@ struct LicenseActivationView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AnimatedHyperBackdrop()
-                    .ignoresSafeArea()
+                LinearGradient(
+    colors: [
+        Color(red: 0.10, green: 0.04, blue: 0.15),
+        Color.black
+    ],
+    startPoint: .topLeading,
+    endPoint: .bottomTrailing
+)
+.ignoresSafeArea()
 
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
