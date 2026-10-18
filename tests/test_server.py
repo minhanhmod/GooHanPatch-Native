@@ -1,6 +1,8 @@
 """Integration tests for the Python standard-library admin server."""
 import contextlib
 import hashlib
+import sqlite3
+import uuid
 import os
 from pathlib import Path
 import re
@@ -38,7 +40,7 @@ class TestServer(unittest.TestCase):
             sock.bind(("127.0.0.1", 0))
             cls.port = sock.getsockname()[1]
         cls.base = f"http://127.0.0.1:{cls.port}"
-        env = dict(os.environ, ADMIN_PASSWORD="a-strong-test-password-123", COOKIE_SECURE="0", PORT=str(cls.port), HOST="127.0.0.1", DATA_DIR=cls.temp.name)
+        env = dict(os.environ, ADMIN_PASSWORD="a-strong-test-password-123", COOKIE_SECURE="0", PORT=str(cls.port), HOST="127.0.0.1", DATA_DIR=cls.temp.name, LICENSE_API_TOKEN="integration-license-admin-token-123456789")
         env.update(NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
         cls.proc = subprocess.Popen([sys.executable, str(SERVER)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         deadline = time.monotonic() + 30
@@ -51,6 +53,7 @@ class TestServer(unittest.TestCase):
             try:
                 with DIRECT_HTTP.open(cls.base + "/health", timeout=1) as res:
                     if res.status == 200:
+                        cls.token = cls.issue_test_license()
                         return
                     last_error = f"/health returned HTTP {res.status}"
             except Exception as exc:
@@ -69,13 +72,29 @@ class TestServer(unittest.TestCase):
         )
 
     @classmethod
+    def issue_test_license(cls):
+        key = "UNITTEST-" + "X" * 24
+        with sqlite3.connect(Path(cls.temp.name) / "patches.sqlite3") as conn:
+            conn.execute("""INSERT INTO license_keys
+                (id,key_hash,masked,prefix,note,duration_seconds,max_devices,issued_at)
+                VALUES(?,?,?,?,?,?,?,?)""", (uuid.uuid4().hex, hashlib.sha256(key.encode()).hexdigest(),
+                      "UNITTEST-••••", "UNITTEST", "", 86400, 2, int(time.time())))
+        req = Request(cls.base+"/api/license/activate", data=json.dumps({
+            "key":key,"device_id":"a" * 32}).encode(),
+            headers={"Content-Type":"application/json"}, method="POST")
+        return json.loads(DIRECT_HTTP.open(req, timeout=5).read())["token"]
+
+    @classmethod
     def tearDownClass(cls):
         cls.proc.terminate()
         cls.proc.wait(timeout=5)
         cls.temp.cleanup()
 
-    def request(self, path, data=None, method=None, headers=None):
-        req = Request(self.base + path, data=data, method=method, headers=headers or {})
+    def request(self, path, data=None, method=None, headers=None, auth=True):
+        headers = dict(headers or {})
+        if auth and (path.startswith("/api/patches") or path.startswith("/downloads/")):
+            headers.setdefault("Authorization", "Bearer " + self.token)
+        req = Request(self.base + path, data=data, method=method, headers=headers)
         try:
             res = DIRECT_HTTP.open(req, timeout=5)
             return res.status, res.headers, res.read()
@@ -83,6 +102,7 @@ class TestServer(unittest.TestCase):
             return e.code, e.headers, e.read()
 
     def test_login_upload_update_and_restore_workflow_backend(self):
+        self.assertEqual(self.request("/api/patches?game=free_fire",auth=False)[0],401)
         code, _, raw = self.request("/api/patches?game=free_fire")
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(raw)["patches"], [])
