@@ -60,7 +60,7 @@ private enum GooError: LocalizedError {
         return nil
     }
 }
-private enum GooPalette {
+enum GooPalette {
     static let all: [(String, String)] = [
         ("Đỏ", "#FF4757"),("Đỏ đậm", "#CD354C"),("Cam", "#F97342"),("Hổ phách", "#EFA53E"),
         ("Vàng", "#FFD45B"),("Chanh", "#C8DB57"),("Lục", "#69D688"),("Ngọc", "#2CC999"),
