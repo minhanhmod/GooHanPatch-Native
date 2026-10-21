@@ -1,3 +1,4 @@
+
 name: Build GooHan Patch experimental IPA
 
 on:
@@ -10,13 +11,16 @@ jobs:
   build-iphone:
     runs-on: macos-15
     timeout-minutes: 40
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
       - name: Show Xcode version
         run: |
           xcodebuild -version
           xcodebuild -list -project ThreeOneOSFive.xcodeproj
+
       - name: Build unsigned iPhone app
         shell: bash
         run: |
@@ -32,26 +36,68 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
             build
+
       - name: Package IPA
         shell: bash
         run: |
           set -euo pipefail
+
           APP="$PWD/build/Build/Products/Release-iphoneos/ThreeOneOSFive.app"
+
           if [[ ! -d "$APP" ]]; then
-            APP="$(find "$PWD/build/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -type d | head -1)"
+            APP="$(find "$PWD/build/Build/Products/Release-iphoneos" \
+              -maxdepth 1 -name '*.app' -type d | head -1)"
           fi
+
           test -d "$APP"
+
           mkdir -p "$PWD/dist/Payload"
+
           ditto "$APP" "$PWD/dist/Payload/$(basename "$APP")"
+
           cd dist
-          /usr/bin/zip -q -r -y GooHanPatch-experimental-unsigned.ipa Payload
-          /usr/bin/unzip -t GooHanPatch-experimental-unsigned.ipa | tail -n 2
-          shasum -a 256 GooHanPatch-experimental-unsigned.ipa > GooHanPatch-experimental-unsigned.ipa.sha256
-       - name: Rename OGIOS to GOHAN
-  run: |
-    python3 scripts/rebrand_ipa.py "DUONG_DAN_FILE_IPA" --in-place
-    python3 scripts/rebrand_ipa.py "DUONG_DAN_FILE_IPA" --check
-  - name: Upload unsigned IPA
+
+          /usr/bin/zip -q -r -y \
+            GooHanPatch-experimental-unsigned.ipa Payload
+
+          /usr/bin/unzip -t \
+            GooHanPatch-experimental-unsigned.ipa | tail -n 2
+
+      - name: GOHAN - Rename OGIOS files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IPA="dist/GooHanPatch-experimental-unsigned.ipa"
+
+          test -f "$IPA"
+          test -f "scripts/rebrand_ipa.py"
+
+          echo "Renaming OGIOS files to GOHAN..."
+
+          python3 scripts/rebrand_ipa.py \
+            "$IPA" --in-place
+
+          echo "Verifying 14 GOHAN files..."
+
+          python3 scripts/rebrand_ipa.py \
+            "$IPA" --check
+
+          echo "Verifying IPA archive..."
+
+          /usr/bin/unzip -t "$IPA" | tail -n 2
+
+          echo "Recalculating SHA256..."
+
+          cd dist
+
+          shasum -a 256 \
+            GooHanPatch-experimental-unsigned.ipa \
+            > GooHanPatch-experimental-unsigned.ipa.sha256
+
+          echo "GOHAN rename completed."
+
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: GooHanPatch-experimental-IPA
