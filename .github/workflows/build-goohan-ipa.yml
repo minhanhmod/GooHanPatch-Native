@@ -47,7 +47,11 @@ jobs:
           /usr/bin/zip -q -r -y GooHanPatch-experimental-unsigned.ipa Payload
           /usr/bin/unzip -t GooHanPatch-experimental-unsigned.ipa | tail -n 2
           shasum -a 256 GooHanPatch-experimental-unsigned.ipa > GooHanPatch-experimental-unsigned.ipa.sha256
-      - name: Upload unsigned IPA
+       - name: Rename OGIOS to GOHAN
+  run: |
+    python3 scripts/rebrand_ipa.py "DUONG_DAN_FILE_IPA" --in-place
+    python3 scripts/rebrand_ipa.py "DUONG_DAN_FILE_IPA" --check
+  - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: GooHanPatch-experimental-IPA
