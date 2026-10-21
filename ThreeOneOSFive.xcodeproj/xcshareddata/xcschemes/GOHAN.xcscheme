@@ -15,8 +15,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "3105A500"
-               BuildableName = "OGIOS.app"
-               BlueprintName = "OGIOS"
+               BuildableName = "GOHAN.app"
+               BlueprintName = "GOHAN"
                ReferencedContainer = "container:ThreeOneOSFive.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -37,8 +37,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "3105A500"
-            BuildableName = "OGIOS.app"
-            BlueprintName = "OGIOS"
+            BuildableName = "GOHAN.app"
+            BlueprintName = "GOHAN"
             ReferencedContainer = "container:ThreeOneOSFive.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -53,8 +53,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "3105A500"
-            BuildableName = "OGIOS.app"
-            BlueprintName = "OGIOS"
+            BuildableName = "GOHAN.app"
+            BlueprintName = "GOHAN"
             ReferencedContainer = "container:ThreeOneOSFive.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

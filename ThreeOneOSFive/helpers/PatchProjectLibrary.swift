@@ -10,7 +10,7 @@ struct PatchLibraryItem: Identifiable {
     var isLocked: Bool { project == nil }
     var displayName: String {
         let filename = packageURL.deletingPathExtension().lastPathComponent
-        if filename.hasPrefix("OGIOS File (") {
+        if filename.hasPrefix("GOHAN File (") {
             return filename
         }
         return project?.name ?? filename
@@ -56,8 +56,8 @@ enum PatchProjectLibrary {
         // Xcode may flatten folder references into the app bundle. Resolve both
         // the intended Patches subdirectory and the flattened bundle root so
         // standalone builds remain self-contained across packaging layouts.
-        let nestedURLs = bundle.urls(forResourcesWithExtension: "OGIOS", subdirectory: "Patches") ?? []
-        let flattenedURLs = bundle.urls(forResourcesWithExtension: "OGIOS", subdirectory: nil) ?? []
+        let nestedURLs = bundle.urls(forResourcesWithExtension: "GOHAN", subdirectory: "Patches") ?? []
+        let flattenedURLs = bundle.urls(forResourcesWithExtension: "GOHAN", subdirectory: nil) ?? []
         var seen = Set<String>()
         let bundledURLs = (nestedURLs + flattenedURLs).filter { seen.insert($0.standardizedFileURL.path).inserted }
 
@@ -83,7 +83,7 @@ enum PatchProjectLibrary {
               ) else { return [] }
 
         var byID: [UUID: PatchLibraryItem] = [:]
-        for url in urls where url.pathExtension.lowercased() == "OGIOS" {
+        for url in urls where ["gohan", "3105"].contains(url.pathExtension.lowercased()) {
             do {
                 let data = try readPackage(at: url)
                 let summary = try PatchPackageCodec.inspect(data)
@@ -93,7 +93,7 @@ enum PatchProjectLibrary {
                 } else if summary.isPasswordProtected {
                     // Only the app's renamed bundled resources use the internal
                     // key; imported packages remain locked for the user.
-                    guard url.deletingPathExtension().lastPathComponent.hasPrefix("OGIOS File (") else {
+                    guard url.deletingPathExtension().lastPathComponent.hasPrefix("GOHAN File (") else {
                         decoded = nil
                         continue
                     }
@@ -155,10 +155,10 @@ enum PatchProjectLibrary {
         } else {
             let root = try packageRootURL(fileManager: fileManager)
             let baseName = sanitizedFilename(projectName)
-            var candidate = root.appendingPathComponent(baseName).appendingPathExtension("OGIOS")
+            var candidate = root.appendingPathComponent(baseName).appendingPathExtension("GOHAN")
             var suffix = 2
             while fileManager.fileExists(atPath: candidate.path) {
-                candidate = root.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension("OGIOS")
+                candidate = root.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension("GOHAN")
                 suffix += 1
             }
             destination = candidate

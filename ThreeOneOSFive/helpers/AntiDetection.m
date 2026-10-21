@@ -1,6 +1,6 @@
 //
 //  AntiDetection.m
-//  OGIOS
+//  GOHAN
 //
 //  Prevents the app from being flagged as jailbroken by common
 //  jailbreak-detection checks. Safe because the app never forks.

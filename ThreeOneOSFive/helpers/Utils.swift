@@ -11,7 +11,7 @@ class AppLog: ObservableObject {
         DispatchQueue.main.async { self.entries.append(msg) }
     }
 }
-func log(_ msg: String) { AppLog.shared.append("[OGIOS] \(msg)") }
+func log(_ msg: String) { AppLog.shared.append("[GOHAN] \(msg)") }
 
 // Retain the pipe for the app's lifetime so stdout/stderr stay redirected.
 private var logCapturePipe: Pipe?
@@ -130,8 +130,8 @@ enum AppPaths {
 
 enum AppUpdateChecker {
     static let dismissedVersionKey = "update.dismissedVersion"
-    static let apiURL = URL(string: "https://api.github.com/repos/YangJiiii/OGIOS/releases/latest")!
-    static let fallbackURL = URL(string: "https://github.com/YangJiiii/OGIOS/releases/latest")!
+    static let apiURL = URL(string: "https://api.github.com/repos/minhanhmod/GooHanPatch-Native/releases/latest")!
+    static let fallbackURL = URL(string: "https://github.com/minhanhmod/GooHanPatch-Native/releases/latest")!
 
     struct Offer: Identifiable {
         let id = UUID()
@@ -152,7 +152,7 @@ enum AppUpdateChecker {
     static func check() async -> Offer? {
         var request = URLRequest(url: apiURL)
         request.timeoutInterval = 15
-        request.setValue("OGIOS", forHTTPHeaderField: "User-Agent")
+        request.setValue("GOHAN", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
