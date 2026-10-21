@@ -34,6 +34,13 @@ final class LicenseManager: ObservableObject {
                 self.isActive = true
                 self.message = nil
             } catch {
+                // VPN denial is a server policy. Do not try redeeming the saved
+                // key while it is active; keep the protected UI locked.
+                if (error as? LicenseError)?.isVPNBlocked == true {
+                    self.isActive = false
+                    self.message = error.localizedDescription
+                    return
+                }
                 // Session tokens expire after 24h. Transparently renew using the
                 // user's Keychain-stored key; the server checks expiry/revocation.
                 guard let key = self.string(for: self.keyAccount) else {
@@ -99,6 +106,12 @@ final class LicenseManager: ObservableObject {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw LicenseError.denied("Không nhận được phản hồi máy chủ") }
+        if http.statusCode == 403,
+           let result = try? JSONDecoder().decode(ServerError.self, from: data),
+           result.error == "VPN_BLOCKED" {
+            isActive = false
+            throw LicenseError.vpnBlocked
+        }
         if http.statusCode == 401 || http.statusCode == 403 {
             isActive = false
             throw LicenseError.denied("Phiên truy cập bị từ chối. Vui lòng xác thực lại")
@@ -115,6 +128,11 @@ final class LicenseManager: ObservableObject {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: request)
+        if let status = response as? HTTPURLResponse, status.statusCode == 403,
+           let result = try? JSONDecoder().decode(ServerError.self, from: data),
+           result.error == "VPN_BLOCKED" {
+            throw LicenseError.vpnBlocked
+        }
         guard let status = response as? HTTPURLResponse, status.statusCode == 200 else {
             throw LicenseError.denied("Key hết hạn, đã thu hồi, phiên hết hạn hoặc máy chủ không khả dụng")
         }
@@ -135,6 +153,11 @@ final class LicenseManager: ObservableObject {
         request.httpBody = try JSONEncoder().encode(ActivationRequest(key: key, deviceId: deviceID))
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw LicenseError.denied("Máy chủ không phản hồi") }
+        if http.statusCode == 403,
+           let result = try? JSONDecoder().decode(ServerError.self, from: data),
+           result.error == "VPN_BLOCKED" {
+            throw LicenseError.vpnBlocked
+        }
         if http.statusCode != 200 {
             let error = try? JSONDecoder().decode(ServerError.self, from: data)
             throw LicenseError.denied(error?.error ?? "Key không hợp lệ (HTTP \(http.statusCode))")
@@ -176,7 +199,14 @@ final class LicenseManager: ObservableObject {
     private struct ServerError: Decodable { let error: String }
     private enum LicenseError: LocalizedError {
         case denied(String)
-        var errorDescription: String? { if case .denied(let v) = self { return v }; return nil }
+        case vpnBlocked
+        var isVPNBlocked: Bool { if case .vpnBlocked = self { return true }; return false }
+        var errorDescription: String? {
+            switch self {
+            case .denied(let value): return value
+            case .vpnBlocked: return "Đã phát hiện VPN/Proxy/Tor. Hãy tắt và mở lại GOHAN."
+            }
+        }
     }
 
     private func string(for account: String) -> String? {

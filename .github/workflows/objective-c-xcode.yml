@@ -11,12 +11,12 @@ on:
       project_name:
         description: Output IPA name
         required: false
-        default: OGIOS
+        default: GOHAN
         type: string
       scheme:
         description: Xcode scheme
         required: false
-        default: OGIOS
+        default: GOHAN
         type: string
 
 permissions:

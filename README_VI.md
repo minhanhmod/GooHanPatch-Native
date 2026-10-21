@@ -1,10 +1,10 @@
 # GOHAN: Tự động đổi tên file .3105 trong IPA trên GitHub Actions
 
 ## Kết quả
-Đổi duy nhất các đường dẫn `Payload/OGIOS.app/OGIOS File (1).3105` ... `(14).3105` thành `Payload/OGIOS.app/GOHAN File (1).3105` ... `(14).3105`.
-Không xóa dữ liệu, không sửa từng byte bên trong file, không đụng tệp thực thi Mach-O `OGIOS`, `.app`, `Info.plist`, cấu hình License, hoặc thuật toán Patch/Un-Patch.
+Đổi duy nhất các đường dẫn `Payload/GOHAN.app/GOHAN File (1).3105` ... `(14).3105` thành `Payload/GOHAN.app/GOHAN File (1).3105` ... `(14).3105`.
+Không xóa dữ liệu, không sửa từng byte bên trong file, không đụng tệp thực thi Mach-O `GOHAN`, `.app`, `Info.plist`, cấu hình License, hoặc thuật toán Patch/Un-Patch.
 
-**Lưu ý:** Việc thay tên file tài nguyên có thể ảnh hưởng nếu mã ứng dụng tham chiếu trực tiếp tên cũ. Trong IPA đầu vào không tìm thấy chuỗi `OGIOS File` ở dạng ASCII nguyên văn trong binary, tuy nhiên điều này không chứng minh 100% an toàn trên iPhone. Kiểm thử sau build là bắt buộc.
+**Lưu ý:** Việc thay tên file tài nguyên có thể ảnh hưởng nếu mã ứng dụng tham chiếu trực tiếp tên cũ. Trong IPA đầu vào không tìm thấy chuỗi `GOHAN File` ở dạng ASCII nguyên văn trong binary, tuy nhiên điều này không chứng minh 100% an toàn trên iPhone. Kiểm thử sau build là bắt buộc.
 
 ## Bước 1: Thêm file vào GitHub
 Tại repository đang dùng để build IPA, tạo `scripts/rebrand_ipa.py` bằng cách upload file cùng tên trong thư mục scripts của gói này. **Không tải ZIP này lên dưới dạng một file duy nhất**.
@@ -44,7 +44,7 @@ python3 scripts/rebrand_ipa.py GooHanPatch-experimental-unsigned.ipa --check
 Nếu thành công, hiển thị `PASS: all 14 .3105 files are named GOHAN`.
 
 ## Giới hạn quan trọng
-- `Payload/OGIOS.app/` và executable `OGIOS` không đổi vì thuộc bộ binary/module Swift; thay tên không có source Xcode có thể làm ứng dụng hỏng.
-- Nếu mục tiêu là loại bỏ hoàn toàn chuỗi OGIOS ở cả Swift binary + metadata, phải chỉnh Xcode project/source và build lại, không nên sửa thẳng hàng nghìn chuỗi OGIOS trong Mach-O.
+- `Payload/GOHAN.app/` và executable `GOHAN` không đổi vì thuộc bộ binary/module Swift; thay tên không có source Xcode có thể làm ứng dụng hỏng.
+- Nếu mục tiêu là loại bỏ hoàn toàn chuỗi GOHAN ở cả Swift binary + metadata, phải chỉnh Xcode project/source và build lại, không nên sửa thẳng hàng nghìn chuỗi GOHAN trong Mach-O.
 - Chỉ kiểm tra tên và byte tài nguyên; chưa xác minh vận hành tính năng Patch/Un-Patch trên iPhone.
 - Nếu nguồn dự án thực sự có các file `.3105`, có thể đổi trực tiếp trong source và sửa references trong Xcode để không cần post-build. Bộ này hữu ích khi bạn muốn mọi IPA *tải từ GitHub Actions* đều đã đổi tên.

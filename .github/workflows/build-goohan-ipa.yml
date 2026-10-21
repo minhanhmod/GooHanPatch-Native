@@ -1,4 +1,3 @@
-
 name: Build GooHan Patch experimental IPA
 
 on:
@@ -11,10 +10,21 @@ jobs:
   build-iphone:
     runs-on: macos-15
     timeout-minutes: 40
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Verify GOHAN source and deleted patch resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ThreeOneOSFive.xcodeproj/xcshareddata/xcschemes/GOHAN.xcscheme
+          test -f ThreeOneOSFive.xcodeproj/project.pbxproj
+          if find ThreeOneOSFive/Patches -type f -name '*.3105' -print -quit | grep -q .; then
+            echo 'ERROR: Bundled .3105 files still exist in source.' >&2
+            exit 1
+          fi
+          echo 'PASS: no bundled .3105 files; GOHAN scheme found'
 
       - name: Show Xcode version
         run: |
@@ -27,7 +37,7 @@ jobs:
           set -euo pipefail
           xcodebuild \
             -project ThreeOneOSFive.xcodeproj \
-            -scheme OGIOS \
+            -scheme GOHAN \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -41,61 +51,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          APP="$PWD/build/Build/Products/Release-iphoneos/ThreeOneOSFive.app"
-
-          if [[ ! -d "$APP" ]]; then
-            APP="$(find "$PWD/build/Build/Products/Release-iphoneos" \
-              -maxdepth 1 -name '*.app' -type d | head -1)"
-          fi
-
-          test -d "$APP"
-
+          APP="$PWD/build/Build/Products/Release-iphoneos/GOHAN.app"
+          test -d "$APP" || { echo "GOHAN.app not found at $APP" >&2; exit 1; }
+          test -f "$APP/GOHAN" || { echo 'GOHAN executable missing' >&2; exit 1; }
           mkdir -p "$PWD/dist/Payload"
-
-          ditto "$APP" "$PWD/dist/Payload/$(basename "$APP")"
-
+          ditto "$APP" "$PWD/dist/Payload/GOHAN.app"
           cd dist
-
-          /usr/bin/zip -q -r -y \
-            GooHanPatch-experimental-unsigned.ipa Payload
-
-          /usr/bin/unzip -t \
-            GooHanPatch-experimental-unsigned.ipa | tail -n 2
-
-      - name: GOHAN - Rename OGIOS files
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          IPA="dist/GooHanPatch-experimental-unsigned.ipa"
-
-          test -f "$IPA"
-          test -f "scripts/rebrand_ipa.py"
-
-          echo "Renaming OGIOS files to GOHAN..."
-
-          python3 scripts/rebrand_ipa.py \
-            "$IPA" --in-place
-
-          echo "Verifying 14 GOHAN files..."
-
-          python3 scripts/rebrand_ipa.py \
-            "$IPA" --check
-
-          echo "Verifying IPA archive..."
-
-          /usr/bin/unzip -t "$IPA" | tail -n 2
-
-          echo "Recalculating SHA256..."
-
-          cd dist
-
-          shasum -a 256 \
-            GooHanPatch-experimental-unsigned.ipa \
-            > GooHanPatch-experimental-unsigned.ipa.sha256
-
-          echo "GOHAN rename completed."
+          /usr/bin/zip -q -r -y GooHanPatch-experimental-unsigned.ipa Payload
+          /usr/bin/unzip -t GooHanPatch-experimental-unsigned.ipa | tail -n 2
+          if /usr/bin/unzip -Z1 GooHanPatch-experimental-unsigned.ipa | grep -E '\.3105$'; then
+            echo 'ERROR: Bundled .3105 remains in the IPA' >&2
+            exit 1
+          fi
+          shasum -a 256 GooHanPatch-experimental-unsigned.ipa > GooHanPatch-experimental-unsigned.ipa.sha256
+          echo 'PASS: GOHAN.app / GOHAN executable, no bundled .3105'
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4

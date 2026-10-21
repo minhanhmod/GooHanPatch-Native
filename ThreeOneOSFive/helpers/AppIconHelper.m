@@ -127,11 +127,11 @@ static void ensureLaunchServicesLoaded(void) {
         };
         for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
             if (dlopen(candidates[i], RTLD_LAZY | RTLD_GLOBAL)) {
-                NSLog(@"[OGIOS] ls: loaded %s", candidates[i]);
+                NSLog(@"[GOHAN] ls: loaded %s", candidates[i]);
                 return;
             }
         }
-        NSLog(@"[OGIOS] ls: CoreServices/MobileCoreServices dlopen failed");
+        NSLog(@"[GOHAN] ls: CoreServices/MobileCoreServices dlopen failed");
     });
 }
 
@@ -141,17 +141,17 @@ static NSDictionary *appsFromWorkspace(void) {
 
     Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
     if (!workspaceClass) {
-        NSLog(@"[OGIOS] ls: LSApplicationWorkspace class unavailable");
+        NSLog(@"[GOHAN] ls: LSApplicationWorkspace class unavailable");
         return result;
     }
     SEL defaultWorkspaceSel = NSSelectorFromString(@"defaultWorkspace");
     if (![workspaceClass respondsToSelector:defaultWorkspaceSel]) {
-        NSLog(@"[OGIOS] ls: defaultWorkspace selector unavailable");
+        NSLog(@"[GOHAN] ls: defaultWorkspace selector unavailable");
         return result;
     }
     id workspace = ((id (*)(id, SEL))objc_msgSend)(workspaceClass, defaultWorkspaceSel);
     if (!workspace) {
-        NSLog(@"[OGIOS] ls: defaultWorkspace returned nil");
+        NSLog(@"[GOHAN] ls: defaultWorkspace returned nil");
         return result;
     }
 
@@ -166,14 +166,14 @@ static NSDictionary *appsFromWorkspace(void) {
             usedSelector = selectorName;
             break;
         }
-        NSLog(@"[OGIOS] ls: %@ returned %lu", selectorName,
+        NSLog(@"[GOHAN] ls: %@ returned %lu", selectorName,
               (unsigned long)([candidate isKindOfClass:[NSArray class]] ? [candidate count] : 0));
     }
     if (!apps || apps.count == 0) {
-        NSLog(@"[OGIOS] ls: workspace enumeration empty");
+        NSLog(@"[GOHAN] ls: workspace enumeration empty");
         return result;
     }
-    NSLog(@"[OGIOS] ls: %@ returned %lu proxies", usedSelector, (unsigned long)apps.count);
+    NSLog(@"[GOHAN] ls: %@ returned %lu proxies", usedSelector, (unsigned long)apps.count);
 
     NSUInteger withContainer = 0;
     for (id app in apps) {
@@ -218,7 +218,7 @@ static NSDictionary *appsFromWorkspace(void) {
             result[bundleID] = entry;
         }
     }
-    NSLog(@"[OGIOS] ls: extracted %lu apps (%lu with container)",
+    NSLog(@"[GOHAN] ls: extracted %lu apps (%lu with container)",
           (unsigned long)result.count, (unsigned long)withContainer);
     return result;
 }
@@ -227,7 +227,7 @@ NSDictionary<NSString *, NSDictionary *> *installedAppInfo(void) {
     NSDictionary *workspace = appsFromWorkspace();
     if (workspace.count > 0) return workspace;
     NSDictionary *mobileInstallation = appsFromMobileInstallation();
-    NSLog(@"[OGIOS] ls: workspace empty; MobileInstallation=%lu",
+    NSLog(@"[GOHAN] ls: workspace empty; MobileInstallation=%lu",
           (unsigned long)mobileInstallation.count);
     return mobileInstallation;
 }
