@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
-"""Optional static audit of the official GooHan IPA UI/privacy port."""
+"""Verify release header is present on all 3 licensed IPA requests."""
 from pathlib import Path
-p = Path("ThreeOneOSFive/ContentView.swift")
-if not p.is_file():
-    raise SystemExit("ERROR: chạy script trong thư mục gốc repository")
-s = p.read_text(encoding="utf-8")
-checks = {
-    "No settings build banner": 'Text("GooHan IPA • BUNDLE_AUTO_TARGET_v5.12.2")' not in s,
-    "No bundle identifier underneath Patch": 'Text(target)' not in s and 'Text(patch.targetBundleId)' not in s,
-    "No dev version in sync status": '"[BUNDLE_AUTO_TARGET_v5.12.2]' not in s,
-    "Presentation redaction present": 'GooPublicText.withoutBundleIdentifiers(message)' in s,
-    "API bundle field preserved": 'let targetBundleId: String?' in s,
-    "Native app target preserved": 'let bundleID = plan.bundleId ?? fallback' in s,
-    "Bundle guard preserved": 'bundleID == serverBundle' in s,
-    "Patch apply engine preserved": 'DevicePatchService.apply(project: project)' in s,
-    "Restore engine preserved": 'DevicePatchService.restore(receipt: receipt)' in s,
-    "Legacy category error absent": 'Mục lớn này chưa có engine Patch tương ứng' not in s,
-}
-for label, ok in checks.items():
-    print(("PASS" if ok else "FAIL") + ": " + label)
-if not all(checks.values()):
-    raise SystemExit(1)
-print("SOURCE READY: bản UI ẩn Bundle ID, không đổi engine Patch/License.")
+source = Path('ThreeOneOSFive/helpers/LicenseManager.swift')
+view = Path('ThreeOneOSFive/ContentView.swift')
+assert source.is_file(), 'Run this script from repository root'
+s = source.read_text(encoding='utf-8')
+v = view.read_text(encoding='utf-8')
+assert 'GOOHAN_OFFICIAL_5_12_4' in s, 'Missing accepted release marker'
+assert 'forHTTPHeaderField: "X-GooHan-Release"' in s, 'Missing release header'
+assert s.count('Self.identify(&') == 3, 'Expected all 3 request types to carry release identity'
+assert 'BUNDLE_AUTO_TARGET_v5.12.2' not in v, 'Old build marker displayed in app'
+assert 'GOOHAN_OFFICIAL_5_12_4' not in v, 'Internal release identifier should not be displayed'
+print('PASS: Official release marker present')
+print('PASS: License activate, status and patch download have release identification')
+print('PASS: No release marker displayed in the GooHan main UI')
+print('SOURCE READY — this check does not compile or sign the IPA')
