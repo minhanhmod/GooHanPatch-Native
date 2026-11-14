@@ -7,6 +7,11 @@ import Security
 @MainActor
 final class LicenseManager: ObservableObject {
     static let serverURL = URL(string: "https://gohanpatch-adminpatch.zcloudviet.xyz")!
+    // Only release identifier sent to Admin; not displayed in Settings.
+    private static let releaseID = "GOOHAN_OFFICIAL_5_12_4"
+    private static func identify(_ request: inout URLRequest) {
+        request.setValue(releaseID, forHTTPHeaderField: "X-GooHan-Release")
+    }
 
     @Published private(set) var isActive = false
     @Published private(set) var isBusy = false
@@ -104,6 +109,7 @@ final class LicenseManager: ObservableObject {
         req.timeoutInterval = 25
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        Self.identify(&req)
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw LicenseError.denied("Không nhận được phản hồi máy chủ") }
         if http.statusCode == 403,
@@ -111,6 +117,12 @@ final class LicenseManager: ObservableObject {
            result.error == "VPN_BLOCKED" {
             isActive = false
             throw LicenseError.vpnBlocked
+        }
+        if http.statusCode == 403,
+           let result = try? JSONDecoder().decode(ServerError.self, from: data),
+           result.error == "CLIENT_UPDATE_REQUIRED" {
+            isActive = false
+            throw LicenseError.denied("Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
         }
         if http.statusCode == 401 || http.statusCode == 403 {
             isActive = false
@@ -127,11 +139,17 @@ final class LicenseManager: ObservableObject {
         request.timeoutInterval = 15
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        Self.identify(&request)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let status = response as? HTTPURLResponse, status.statusCode == 403,
            let result = try? JSONDecoder().decode(ServerError.self, from: data),
            result.error == "VPN_BLOCKED" {
             throw LicenseError.vpnBlocked
+        }
+        if let status = response as? HTTPURLResponse, status.statusCode == 403,
+           let result = try? JSONDecoder().decode(ServerError.self, from: data),
+           result.error == "CLIENT_UPDATE_REQUIRED" {
+            throw LicenseError.denied("Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
         }
         guard let status = response as? HTTPURLResponse, status.statusCode == 200 else {
             throw LicenseError.denied("Key hết hạn, đã thu hồi, phiên hết hạn hoặc máy chủ không khả dụng")
@@ -150,6 +168,7 @@ final class LicenseManager: ObservableObject {
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        Self.identify(&request)
         request.httpBody = try JSONEncoder().encode(ActivationRequest(key: key, deviceId: deviceID))
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw LicenseError.denied("Máy chủ không phản hồi") }
@@ -160,6 +179,9 @@ final class LicenseManager: ObservableObject {
         }
         if http.statusCode != 200 {
             let error = try? JSONDecoder().decode(ServerError.self, from: data)
+            if error?.error == "CLIENT_UPDATE_REQUIRED" {
+                throw LicenseError.denied("Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
+            }
             throw LicenseError.denied(error?.error ?? "Key không hợp lệ (HTTP \(http.statusCode))")
         }
         let payload = try JSONDecoder().decode(LicenseReply.self, from: data)
