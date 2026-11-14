@@ -404,6 +404,9 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    Text("GooHan IPA • BUNDLE_AUTO_TARGET_v5.12.2")
+                        .font(.caption2.monospaced()).foregroundColor(color)
+                        .accessibilityLabel("Build Bundle Auto Target v5.12.2")
                     Text(themeLabel).font(.headline)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 16) {
                         ForEach(0..<GooPalette.all.count, id: \.self) { index in
@@ -539,7 +542,7 @@ struct ContentView: View {
                let first = availableCategories.first { game = first.id }
             GooCache.saveCatalog(catalog)
             GooCache.saveCategories(categories)
-            message = "Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
+            message = "[BUNDLE_AUTO_TARGET_v5.12.2] Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
                       (configWarning.map { " \($0)" } ?? "")
         } catch {
             message = "Lỗi đồng bộ: \(error.localizedDescription). Các gói đang bật vẫn được giữ để khôi phục."
@@ -622,7 +625,7 @@ struct ContentView: View {
                         throw GooError.message("Bundle ID không phù hợp mục Free Fire / MAX")
                     }
                 } else if patch.targetBundleId == nil {
-                    throw GooError.message("Patch của mục tùy ý chưa có Bundle ID; hãy đăng lại .3105")
+                    throw GooError.message("Admin chưa trả target_bundle_id cho Patch của mục tùy ý. Hãy kiểm tra Web Admin v5.12.1, đăng lại .3105 rồi Đồng bộ Admin.")
                 }
                 guard patch.id.count == 32, patch.id.allSatisfy({ $0.isHexDigit }),
                       patch.downloadPath == "/downloads/" + patch.id,
