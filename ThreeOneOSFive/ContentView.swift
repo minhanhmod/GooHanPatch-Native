@@ -5,8 +5,9 @@ import CryptoKit
 private struct GooPatch: Codable, Identifiable, Hashable {
     let id: String
     let game: String
-    // A category is only a UI grouping; it does not change the patch engine target.
+    // Admin category is presentation; authenticated .3105 Bundle ID is target.
     let categoryId: String?
+    let targetBundleId: String?
     let feature: String
     let version: String
     let sha256: String
@@ -66,6 +67,7 @@ private struct GooPlan: Codable {
     let packageId: String
     let name: String
     let game: String
+    let bundleId: String?
     let rules: [Rule]
 }
 private enum GooError: LocalizedError {
@@ -368,6 +370,10 @@ struct ContentView: View {
                     Text(patch.feature).font(.system(size: 16, weight: .bold, design: .rounded))
                     Text("v\(patch.version)  ·  \(active ? "Đang bật" : "Đã tắt")")
                         .font(.caption).foregroundColor(.white.opacity(0.56))
+                    if let target = patch.targetBundleId, !target.isEmpty {
+                        Text(target).font(.caption2.monospaced())
+                            .foregroundColor(.white.opacity(0.58)).lineLimit(1)
+                    }
                     if !patch.description.isEmpty {
                         Text(patch.description).font(.caption2)
                             .foregroundColor(.white.opacity(0.46)).lineLimit(2)
@@ -398,6 +404,9 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    Text("GooHan IPA • BUNDLE_AUTO_TARGET_v5.12.2")
+                        .font(.caption2.monospaced()).foregroundColor(color)
+                        .accessibilityLabel("Build Bundle Auto Target v5.12.2")
                     Text(themeLabel).font(.headline)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 16) {
                         ForEach(0..<GooPalette.all.count, id: \.self) { index in
@@ -533,7 +542,7 @@ struct ContentView: View {
                let first = availableCategories.first { game = first.id }
             GooCache.saveCatalog(catalog)
             GooCache.saveCategories(categories)
-            message = "Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
+            message = "[BUNDLE_AUTO_TARGET_v5.12.2] Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
                       (configWarning.map { " \($0)" } ?? "")
         } catch {
             message = "Lỗi đồng bộ: \(error.localizedDescription). Các gói đang bật vẫn được giữ để khôi phục."
@@ -545,7 +554,18 @@ struct ContentView: View {
               (1...100).contains(plan.rules.count) else {
             throw GooError.message("Kế hoạch .3105 không hợp lệ")
         }
-        let bundleID: String = patch.game == "free_fire" ? "com.dts.freefireth" : "com.dts.freefiremax"
+        // New packages carry the authenticated target bundle in the server plan;
+        // old FF/MAX packages remain compatible with the original fixed mapping.
+        let fallback = patch.game == "free_fire" ? "com.dts.freefireth" : "com.dts.freefiremax"
+        let bundleID = plan.bundleId ?? fallback
+        guard (try? PatchPathValidator.canonicalBundleIdentifier(bundleID)) == bundleID,
+              !bundleID.lowercased().hasPrefix("com.apple."),
+              !bundleID.lowercased().hasPrefix("systemgroup."),
+              !bundleID.lowercased().hasPrefix("group.com.apple."),
+              let serverBundle = patch.targetBundleId ?? ((plan.bundleId == nil) ? fallback : nil),
+              bundleID == serverBundle else {
+            throw GooError.message("Bundle ID .3105 không khớp dữ liệu Admin")
+        }
         var seen = Set<String>()
         let rules: [PatchRule] = try plan.rules.map { rule in
             let safe = try PatchPathValidator.canonicalRelativePath(rule.relativePath)
@@ -595,9 +615,17 @@ struct ContentView: View {
                     throw GooError.message("Chỉ hỗ trợ gói .3105 đang được Admin xuất bản")
                 }
                 guard let section = categories.first(where: { $0.id == (patch.categoryId ?? patch.game) }),
-                      section.enabled, section.targetGame == patch.game,
-                      patch.game == "free_fire" || patch.game == "free_fire_max" else {
-                    throw GooError.message("Mục lớn này chưa có engine Patch tương ứng")
+                      section.enabled else {
+                    throw GooError.message("Mục lớn đã bị ẩn hoặc không tồn tại")
+                }
+                if let requiredGame = section.targetGame {
+                    guard patch.game == requiredGame,
+                          patch.targetBundleId == nil || patch.targetBundleId ==
+                            (requiredGame == "free_fire" ? "com.dts.freefireth" : "com.dts.freefiremax") else {
+                        throw GooError.message("Bundle ID không phù hợp mục Free Fire / MAX")
+                    }
+                } else if patch.targetBundleId == nil {
+                    throw GooError.message("Admin chưa trả target_bundle_id cho Patch của mục tùy ý. Hãy kiểm tra Web Admin v5.12.1, đăng lại .3105 rồi Đồng bộ Admin.")
                 }
                 guard patch.id.count == 32, patch.id.allSatisfy({ $0.isHexDigit }),
                       patch.downloadPath == "/downloads/" + patch.id,
@@ -621,7 +649,7 @@ struct ContentView: View {
                 guard GooCache.hasReceipt(for: patch) else {
                     throw GooError.message("Không thấy biên nhận Patch; không thể xác nhận thành công")
                 }
-                message = "Đã áp dụng \(patch.feature) và lưu biên nhận khôi phục."
+                message = "Đã áp dụng \(patch.feature) vào ứng dụng khớp Bundle ID; đã lưu biên nhận khôi phục."
             } else {
                 guard let plan = GooCache.readPlan(patch.id), let id = UUID(uuidString: plan.packageId),
                       let receipt = DevicePatchService.latestReceipt(projectID: id) else {
