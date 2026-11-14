@@ -77,6 +77,18 @@ private enum GooError: LocalizedError {
         return nil
     }
 }
+// Presentation-only privacy filter. Bundle IDs remain untouched in .3105,
+// Admin sync and the on-device Patch transaction.
+private enum GooPublicText {
+    static func withoutBundleIdentifiers(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"\b(?:[A-Za-z][A-Za-z0-9_-]*\.){2,}[A-Za-z0-9_-]+\b"#,
+            with: "ứng dụng đích",
+            options: .regularExpression
+        )
+    }
+}
+
 enum GooPalette {
     static let all: [(String, String)] = [
         ("Đỏ", "#FF4757"),("Đỏ đậm", "#CD354C"),("Cam", "#F97342"),("Hổ phách", "#EFA53E"),
@@ -252,7 +264,8 @@ struct ContentView: View {
                     card {
                         HStack(alignment: .top, spacing: 11) {
                             Image(systemName: "info.circle.fill").foregroundColor(color)
-                            Text(message).font(.footnote).foregroundColor(.white.opacity(0.8))
+                            Text(GooPublicText.withoutBundleIdentifiers(message))
+                                .font(.footnote).foregroundColor(.white.opacity(0.8))
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Text(footer)
@@ -355,7 +368,7 @@ struct ContentView: View {
                         }.disabled(busyId != nil)
                     }
                 }
-                Text(notice).font(.footnote).foregroundColor(.white.opacity(0.62))
+                Text(GooPublicText.withoutBundleIdentifiers(notice)).font(.footnote).foregroundColor(.white.opacity(0.62))
             }
         }
     }
@@ -370,12 +383,8 @@ struct ContentView: View {
                     Text(patch.feature).font(.system(size: 16, weight: .bold, design: .rounded))
                     Text("v\(patch.version)  ·  \(active ? "Đang bật" : "Đã tắt")")
                         .font(.caption).foregroundColor(.white.opacity(0.56))
-                    if let target = patch.targetBundleId, !target.isEmpty {
-                        Text(target).font(.caption2.monospaced())
-                            .foregroundColor(.white.opacity(0.58)).lineLimit(1)
-                    }
                     if !patch.description.isEmpty {
-                        Text(patch.description).font(.caption2)
+                        Text(GooPublicText.withoutBundleIdentifiers(patch.description)).font(.caption2)
                             .foregroundColor(.white.opacity(0.46)).lineLimit(2)
                     }
                     Text(active ? restoreLabel : applyLabel)
@@ -404,9 +413,6 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("GooHan IPA • BUNDLE_AUTO_TARGET_v5.12.2")
-                        .font(.caption2.monospaced()).foregroundColor(color)
-                        .accessibilityLabel("Build Bundle Auto Target v5.12.2")
                     Text(themeLabel).font(.headline)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 16) {
                         ForEach(0..<GooPalette.all.count, id: \.self) { index in
@@ -542,7 +548,7 @@ struct ContentView: View {
                let first = availableCategories.first { game = first.id }
             GooCache.saveCatalog(catalog)
             GooCache.saveCategories(categories)
-            message = "[BUNDLE_AUTO_TARGET_v5.12.2] Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
+            message = "Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
                       (configWarning.map { " \($0)" } ?? "")
         } catch {
             message = "Lỗi đồng bộ: \(error.localizedDescription). Các gói đang bật vẫn được giữ để khôi phục."
@@ -564,7 +570,7 @@ struct ContentView: View {
               !bundleID.lowercased().hasPrefix("group.com.apple."),
               let serverBundle = patch.targetBundleId ?? ((plan.bundleId == nil) ? fallback : nil),
               bundleID == serverBundle else {
-            throw GooError.message("Bundle ID .3105 không khớp dữ liệu Admin")
+            throw GooError.message("Ứng dụng đích trong gói .3105 không khớp dữ liệu Admin")
         }
         var seen = Set<String>()
         let rules: [PatchRule] = try plan.rules.map { rule in
@@ -622,10 +628,10 @@ struct ContentView: View {
                     guard patch.game == requiredGame,
                           patch.targetBundleId == nil || patch.targetBundleId ==
                             (requiredGame == "free_fire" ? "com.dts.freefireth" : "com.dts.freefiremax") else {
-                        throw GooError.message("Bundle ID không phù hợp mục Free Fire / MAX")
+                        throw GooError.message("Gói Patch không thuộc ứng dụng của mục Free Fire / MAX")
                     }
                 } else if patch.targetBundleId == nil {
-                    throw GooError.message("Admin chưa trả target_bundle_id cho Patch của mục tùy ý. Hãy kiểm tra Web Admin v5.12.1, đăng lại .3105 rồi Đồng bộ Admin.")
+                    throw GooError.message("Admin chưa trả thông tin ứng dụng đích cho gói Patch. Hãy kiểm tra Web Admin, đăng lại .3105 rồi Đồng bộ Admin.")
                 }
                 guard patch.id.count == 32, patch.id.allSatisfy({ $0.isHexDigit }),
                       patch.downloadPath == "/downloads/" + patch.id,
@@ -649,7 +655,7 @@ struct ContentView: View {
                 guard GooCache.hasReceipt(for: patch) else {
                     throw GooError.message("Không thấy biên nhận Patch; không thể xác nhận thành công")
                 }
-                message = "Đã áp dụng \(patch.feature) vào ứng dụng khớp Bundle ID; đã lưu biên nhận khôi phục."
+                message = "Đã áp dụng \(patch.feature) vào ứng dụng đích; đã lưu biên nhận khôi phục."
             } else {
                 guard let plan = GooCache.readPlan(patch.id), let id = UUID(uuidString: plan.packageId),
                       let receipt = DevicePatchService.latestReceipt(projectID: id) else {
@@ -713,7 +719,7 @@ struct GooHanRecoveryPanel: View {
                 Text("Không có bản Patch nào cần khôi phục.")
                     .font(.caption).foregroundColor(.white.opacity(0.4))
             }
-            if !result.isEmpty { Text(result).font(.caption).foregroundColor(.orange) }
+            if !result.isEmpty { Text(GooPublicText.withoutBundleIdentifiers(result)).font(.caption).foregroundColor(.orange) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
