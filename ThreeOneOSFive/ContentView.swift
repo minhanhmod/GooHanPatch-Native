@@ -5,6 +5,8 @@ import CryptoKit
 private struct GooPatch: Codable, Identifiable, Hashable {
     let id: String
     let game: String
+    // A category is only a UI grouping; it does not change the patch engine target.
+    let categoryId: String?
     let feature: String
     let version: String
     let sha256: String
@@ -16,6 +18,19 @@ private struct GooPatch: Codable, Identifiable, Hashable {
     let description: String
 }
 private struct GooResponse: Decodable { let patches: [GooPatch] }
+private struct GooCategory: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let targetGame: String?
+    let sortOrder: Int
+    let enabled: Bool
+
+    static let defaultCategories: [GooCategory] = [
+        GooCategory(id: "free_fire", name: "Free Fire", targetGame: "free_fire", sortOrder: 0, enabled: true),
+        GooCategory(id: "free_fire_max", name: "Free Fire MAX", targetGame: "free_fire_max", sortOrder: 10, enabled: true)
+    ]
+}
+private struct GooCategoriesResponse: Decodable { let categories: [GooCategory] }
 // Every field is optional so a partially updated Admin server does not
 // prevent the iPhone from applying all other available content updates.
 private struct GooConfig: Codable {
@@ -115,6 +130,19 @@ private enum GooCache {
         guard let url = try? path("catalog.json"), let d = try? Data(contentsOf: url) else { return [] }
         return (try? JSONDecoder().decode([GooPatch].self, from: d)) ?? []
     }
+    static func loadCategories() -> [GooCategory] {
+        guard let url = try? path("categories.json"),
+              let data = try? Data(contentsOf: url),
+              let result = try? JSONDecoder().decode([GooCategory].self, from: data) else {
+            return GooCategory.defaultCategories
+        }
+        return result
+    }
+    static func saveCategories(_ items: [GooCategory]) {
+        guard let url = try? path("categories.json"),
+              let data = try? JSONEncoder().encode(items) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
     static func saveCatalog(_ items: [GooPatch]) {
         guard let url = try? path("catalog.json"), let d = try? JSONEncoder().encode(items) else { return }
         try? d.write(to: url, options: .atomic)
@@ -154,6 +182,7 @@ struct ContentView: View {
     @AppStorage("GooHanThemeHex") private var themeHex = "#FF4757"
     @State private var game = "free_fire"
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
+    @State private var categories: [GooCategory] = GooCache.loadCategories()
     @State private var title = "GooHan Patch"
     @State private var kicker = "GOOHAN • PATCH MANAGER"
     @State private var subtitle = "Admin-managed Patch Library"
@@ -183,8 +212,15 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var color: Color { Color(gooHex: themeHex) }
+    private var availableCategories: [GooCategory] {
+        // Keep a category visible while its active patches still need restoration.
+        let activeIDs = Set(catalog.filter { GooCache.hasReceipt(for: $0) }
+            .map { $0.categoryId ?? $0.game })
+        return categories.filter { $0.enabled || activeIDs.contains($0.id) }
+            .sorted { $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder }
+    }
     private var visible: [GooPatch] {
-        catalog.filter { $0.game == game && ($0.enabled || GooCache.hasReceipt(for: $0)) }
+        catalog.filter { ($0.categoryId ?? $0.game) == game && ($0.enabled || GooCache.hasReceipt(for: $0)) }
             .sorted { $0.sortOrder == $1.sortOrder ? $0.feature < $1.feature : $0.sortOrder < $1.sortOrder }
     }
     var body: some View {
@@ -281,15 +317,21 @@ struct ContentView: View {
         }
     }
     private var gamePicker: some View {
-        HStack(spacing: 10) {
-            gameButton("free_fire", ffName)
-            gameButton("free_fire_max", maxName)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(availableCategories) { category in
+                    gameButton(category.id, category.name)
+                }
+            }
+            .padding(.vertical, 2)
         }
+        .accessibilityLabel("Danh sách mục lớn đồng bộ từ Admin")
     }
     private func gameButton(_ key: String, _ name: String) -> some View {
         Button { game = key } label: {
             Text(name).font(.system(size: 13, weight: .bold, design: .rounded))
-                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                .lineLimit(1)
+                .padding(.horizontal, 18).padding(.vertical, 14)
                 .background(game == key ? color.opacity(0.23) : Color.white.opacity(0.07),
                             in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(game == key ? color : .white.opacity(0.08)))
@@ -449,21 +491,49 @@ struct ContentView: View {
             } catch {
                 configWarning = "Không tải được nội dung từ Admin: \(error.localizedDescription)"
             }
-            var incoming: [GooPatch] = []
-            for key in ["free_fire", "free_fire_max"] {
-                var components = URLComponents(url: base.appendingPathComponent("api/patches"), resolvingAgainstBaseURL: false)!
-                components.queryItems = [URLQueryItem(name: "game", value: key)]
-                guard let url = components.url else { continue }
-                let response = try jsonDecoder().decode(GooResponse.self, from: await getData(url))
-                incoming += response.patches.filter { $0.game == key }
+            // v5.11: fetch all public categories and patches in the same sync.
+            // If the server is still v5.10.1, retain the previous FF/FF MAX API.
+            let incoming: [GooPatch]
+            let fetchedCategories: [GooCategory]
+            do {
+                let metadata = try await getData(base.appendingPathComponent("api/categories"))
+                let response = try jsonDecoder().decode(GooCategoriesResponse.self, from: metadata)
+                let packages = try await getData(base.appendingPathComponent("api/patches"))
+                incoming = try jsonDecoder().decode(GooResponse.self, from: packages).patches
+                fetchedCategories = response.categories
+            } catch {
+                var legacy: [GooPatch] = []
+                for key in ["free_fire", "free_fire_max"] {
+                    var parts = URLComponents(url: base.appendingPathComponent("api/patches"), resolvingAgainstBaseURL: false)!
+                    parts.queryItems = [URLQueryItem(name: "game", value: key)]
+                    guard let url = parts.url else { continue }
+                    let response = try jsonDecoder().decode(GooResponse.self, from: await getData(url))
+                    legacy += response.patches.filter { $0.game == key }
+                }
+                incoming = legacy
+                fetchedCategories = [
+                    GooCategory(id: "free_fire", name: ffName, targetGame: "free_fire", sortOrder: 0, enabled: true),
+                    GooCategory(id: "free_fire_max", name: maxName, targetGame: "free_fire_max", sortOrder: 10, enabled: true)
+                ]
             }
             let old = GooCache.loadCatalog()
             let activeMissing = old.filter { oldPatch in
                 !incoming.contains(where: { $0.id == oldPatch.id }) && GooCache.hasReceipt(for: oldPatch)
             }
+            let categoryIDs = Set(fetchedCategories.map(\.id))
+            let retainedCategories = categories.filter { previous in
+                !categoryIDs.contains(previous.id) && activeMissing.contains {
+                    ($0.categoryId ?? $0.game) == previous.id
+                }
+            }
+            // Update visible state only after receiving both API payloads.
             catalog = incoming + activeMissing
+            categories = fetchedCategories + retainedCategories
+            if !availableCategories.contains(where: { $0.id == game }),
+               let first = availableCategories.first { game = first.id }
             GooCache.saveCatalog(catalog)
-            message = "Đã đồng bộ \(incoming.count) gói từ Admin." +
+            GooCache.saveCategories(categories)
+            message = "Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
                       (configWarning.map { " \($0)" } ?? "")
         } catch {
             message = "Lỗi đồng bộ: \(error.localizedDescription). Các gói đang bật vẫn được giữ để khôi phục."
@@ -523,6 +593,11 @@ struct ContentView: View {
                 guard !GooCache.hasReceipt(for: patch) else { return }
                 guard patch.enabled, patch.packageFormat == "3105" else {
                     throw GooError.message("Chỉ hỗ trợ gói .3105 đang được Admin xuất bản")
+                }
+                guard let section = categories.first(where: { $0.id == (patch.categoryId ?? patch.game) }),
+                      section.enabled, section.targetGame == patch.game,
+                      patch.game == "free_fire" || patch.game == "free_fire_max" else {
+                    throw GooError.message("Mục lớn này chưa có engine Patch tương ứng")
                 }
                 guard patch.id.count == 32, patch.id.allSatisfy({ $0.isHexDigit }),
                       patch.downloadPath == "/downloads/" + patch.id,
