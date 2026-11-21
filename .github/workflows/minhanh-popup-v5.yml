@@ -23,7 +23,7 @@ jobs:
             -O2 -dynamiclib \
             -Wl,-install_name,@rpath/MinhAnhNeonPopup_V5.dylib \
             -o MinhAnhNeonPopup_V5.dylib MinhAnhNeonPopup_V5.m \
-            -framework UIKit -framework Foundation -framework QuartzCore -lobjc
+            -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics
           file MinhAnhNeonPopup_V5.dylib
           xcrun vtool -show-build MinhAnhNeonPopup_V5.dylib
       - name: Upload compiled dylib
