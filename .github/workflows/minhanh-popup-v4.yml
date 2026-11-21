@@ -23,7 +23,7 @@ jobs:
             -O2 -dynamiclib \
             -Wl,-install_name,@rpath/MinhAnhPopup_V4.dylib \
             -o MinhAnhPopup_V4.dylib MinhAnhPopup_V4.c \
-            -framework UIKit -framework Foundation -lobjc -ldispatch
+            -framework UIKit -framework Foundation -lobjc
           file MinhAnhPopup_V4.dylib
           xcrun vtool -show-build MinhAnhPopup_V4.dylib
       - name: Upload dylib
