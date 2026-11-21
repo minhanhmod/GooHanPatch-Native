@@ -1,0 +1,34 @@
+name: MinhAnh Neon Popup V6 Build
+
+on:
+  push:
+    branches: [minhanh-popup-v6-linkfix]
+    paths:
+      - "tools/minhanh-popup-v6/**"
+      - ".github/workflows/minhanh-popup-v6.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile arm64 iOS dylib
+        run: |
+          set -euxo pipefail
+          cd tools/minhanh-popup-v6
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang -x objective-c -arch arm64 -isysroot "$SDK" \
+            -miphoneos-version-min=12.0 -fobjc-arc -fblocks \
+            -O2 -dynamiclib \
+            -Wl,-install_name,@rpath/MinhAnhNeonPopup_V6.dylib \
+            -o MinhAnhNeonPopup_V6.dylib MinhAnhNeonPopup_V6.m \
+            -framework UIKit -framework Foundation -framework QuartzCore \
+            -framework CoreGraphics -framework SafariServices
+          file MinhAnhNeonPopup_V6.dylib
+          xcrun vtool -show-build MinhAnhNeonPopup_V6.dylib
+      - name: Upload compiled dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinhAnhNeonPopup_V6
+          path: tools/minhanh-popup-v6/MinhAnhNeonPopup_V6.dylib
