@@ -16,7 +16,8 @@ struct PatchLibraryItem: Identifiable {
         return project?.name ?? filename
     }
     var workspaceURL: URL? {
-        PatchWorkspaceService.workspaceURL(projectID: id)
+        guard summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion else { return nil }
+        return PatchWorkspaceService.workspaceURL(projectID: id)
     }
 }
 
@@ -83,7 +84,7 @@ enum PatchProjectLibrary {
               ) else { return [] }
 
         var byID: [UUID: PatchLibraryItem] = [:]
-        for url in urls where ["gohan", "3105"].contains(url.pathExtension.lowercased()) {
+        for url in urls where ["gohan", "3105", "3106"].contains(url.pathExtension.lowercased()) {
             do {
                 let data = try readPackage(at: url)
                 let summary = try PatchPackageCodec.inspect(data)
@@ -116,7 +117,8 @@ enum PatchProjectLibrary {
                     contentKey: decoded?.contentKey,
                     packageURL: url
                 )
-                if summary.schemaVersion >= 2, let project = decoded?.project {
+                if summary.schemaVersion >= 2 && summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion,
+                   let project = decoded?.project {
                     do {
                         _ = try PatchWorkspaceService.ensureWorkspace(for: project)
                     } catch {
@@ -147,7 +149,8 @@ enum PatchProjectLibrary {
         data: Data,
         projectName: String,
         existingURL: URL? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        packageExtension: String = "GOHAN"
     ) throws -> URL {
         let destination: URL
         if let existingURL {
@@ -155,10 +158,10 @@ enum PatchProjectLibrary {
         } else {
             let root = try packageRootURL(fileManager: fileManager)
             let baseName = sanitizedFilename(projectName)
-            var candidate = root.appendingPathComponent(baseName).appendingPathExtension("GOHAN")
+            var candidate = root.appendingPathComponent(baseName).appendingPathExtension(packageExtension)
             var suffix = 2
             while fileManager.fileExists(atPath: candidate.path) {
-                candidate = root.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension("GOHAN")
+                candidate = root.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension(packageExtension)
                 suffix += 1
             }
             destination = candidate
@@ -181,19 +184,22 @@ enum PatchProjectLibrary {
                 data: data,
                 projectName: decoded.project.name,
                 existingURL: existingURL,
-                fileManager: fileManager
+                fileManager: fileManager,
+                packageExtension: summary.schemaVersion >= 3 ? "3106" : "GOHAN"
             )
-            if summary.schemaVersion >= 2 {
+            if summary.schemaVersion >= 2 && summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion {
                 _ = try PatchWorkspaceService.replaceWorkspace(
                     with: decoded.project,
                     fileManager: fileManager
                 )
-            } else {
+            } else if summary.schemaVersion < 2 {
                 try? PatchWorkspaceService.deleteWorkspace(
                     projectID: decoded.project.id,
                     fileManager: fileManager
                 )
             }
+            // Schema-3 packages are stored and decoded without mutating
+            // workspace files until that workflow has been verified.
         } catch {
             if let previousData, let existingURL {
                 try? previousData.write(
@@ -220,6 +226,7 @@ enum PatchProjectLibrary {
         fileManager: FileManager = .default
     ) throws -> PatchProject {
         guard item.summary.schemaVersion >= 2,
+              item.summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion,
               let baseProject = item.project,
               let contentKey = item.contentKey else {
             throw PatchPackageError.invalidProject
