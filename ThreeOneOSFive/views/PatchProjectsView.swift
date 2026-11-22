@@ -4,7 +4,12 @@ import UniformTypeIdentifiers
 
 private enum PatchPackagePickerPolicy {
     static let packageType = UTType(filenameExtension: "GOHAN") ?? .data
-    static let allowedContentTypes: [UTType] = [packageType, .data]
+    static let allowedContentTypes: [UTType] = [
+        packageType,
+        UTType(filenameExtension: "3105") ?? .data,
+        UTType(filenameExtension: "3106") ?? .data,
+        .data
+    ]
     static let copiesSelectedDocument = true
 }
 
@@ -381,6 +386,14 @@ private struct PatchProjectDetailView: View {
                     }
                 }
 
+                if item.summary.schemaVersion >= 3 {
+                    Section {
+                        Label("Gói .3106 đã được đọc. Hiện chưa cho phép chỉnh sửa hoặc áp dụng bằng backend GooHan.", systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
                 Section(language.text("patch.password")) {
                     HStack(spacing: 12) {
                         Image(systemName: item.summary.isPasswordProtected ? "lock.fill" : "lock.open")
@@ -399,7 +412,7 @@ private struct PatchProjectDetailView: View {
                     } label: {
                         actionLabel("patch.apply", systemImage: "checkmark.shield.fill")
                     }
-                    .disabled(isWorking)
+                    .disabled(isWorking || item.summary.schemaVersion > PatchPackageCodec.latestSchemaVersion)
 
                     if receipt != nil {
                         Button(role: .destructive) {
@@ -426,7 +439,8 @@ private struct PatchProjectDetailView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if isWorking {
                     ProgressView()
-                } else if !isWorkspaceProject {
+                } else if !isWorkspaceProject &&
+                            (item?.summary.schemaVersion ?? 1) <= PatchPackageCodec.latestSchemaVersion {
                     Button(language.text("patch.edit")) { showEditor = true }
                         .disabled(item?.project == nil)
                 }
@@ -525,6 +539,10 @@ private struct PatchProjectDetailView: View {
 
     private func apply() {
         guard let item, let baseProject = item.project else { return }
+        guard item.summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion else {
+            actionAlert = PatchStoreAlert(titleKey: "common.failed", messageKey: "patch.error.unsupported_version")
+            return
+        }
         isWorking = true
         Task.detached(priority: .userInitiated) {
             do {
@@ -560,7 +578,8 @@ private struct PatchProjectDetailView: View {
         isWorking = true
         Task.detached(priority: .userInitiated) {
             do {
-                if item.summary.schemaVersion >= 2 {
+                if item.summary.schemaVersion >= 2 &&
+                   item.summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion {
                     _ = try PatchProjectLibrary.synchronizeWorkspace(item: item)
                 }
                 await MainActor.run {
