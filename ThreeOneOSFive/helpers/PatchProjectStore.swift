@@ -65,6 +65,7 @@ final class PatchProjectStore: ObservableObject {
 
     func update(project: PatchProject) {
         guard let item = items.first(where: { $0.id == project.id }),
+              item.summary.schemaVersion <= PatchPackageCodec.latestSchemaVersion,
               let contentKey = item.contentKey else {
             present(.invalidProject)
             return
