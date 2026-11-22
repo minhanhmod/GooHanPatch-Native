@@ -63,6 +63,7 @@
                 <array>
                     <string>gohan</string>
                     <string>3105</string>
+                    <string>3106</string>
                 </array>
                 <key>public.mime-type</key>
                 <string>application/x-GOHAN-patch</string>
