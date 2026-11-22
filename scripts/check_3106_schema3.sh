@@ -21,7 +21,8 @@ let project = PatchProject(
     rules: [rule]
 )
 let legacy = try PatchPackageCodec.encodeNew(project: project, password: nil)
-precondition(try PatchPackageCodec.inspect(legacy.data).schemaVersion == 2)
+let legacySummary = try PatchPackageCodec.inspect(legacy.data)
+precondition(legacySummary.schemaVersion == 2)
 
 let header = Data("3105PATCH\0".utf8)
 precondition(legacy.data.starts(with: header))
