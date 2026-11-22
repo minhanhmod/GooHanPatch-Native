@@ -5,7 +5,8 @@ import Security
 
 enum PatchPackageCodec {
     private static let magic = Data("3105PATCH\0".utf8)
-    static let latestSchemaVersion = 2
+    static let latestSchemaVersion = 2 // Keep legacy exports unchanged.
+    static let maximumReadableSchemaVersion = 3 // 3106 import/read only.
     private static let minimumSchemaVersion = 1
 
     // Built-in resources are encrypted at rest. This value is only used by the
@@ -64,6 +65,9 @@ enum PatchPackageCodec {
         kdfIterations: Int
     ) throws -> EncodedPatchPackage {
         try validate(project)
+        // Private 3106 packages require owner-copy workspace semantics, which
+        // are not implemented in GooHan. Do not silently downgrade privacy.
+        guard !project.isPrivate else { throw PatchPackageError.unsupportedVersion }
         guard (minimumSchemaVersion...latestSchemaVersion).contains(schemaVersion) else {
             throw PatchPackageError.unsupportedVersion
         }
@@ -192,6 +196,7 @@ enum PatchPackageCodec {
             throw PatchPackageError.invalidPasswordOrCorruptedPackage
         }
         try validate(project)
+        guard !project.isPrivate else { throw PatchPackageError.unsupportedVersion }
         let schemaVersion = requestedSchemaVersion ?? oldEnvelope.schemaVersion
         guard (minimumSchemaVersion...latestSchemaVersion).contains(schemaVersion) else {
             throw PatchPackageError.unsupportedVersion
@@ -266,6 +271,11 @@ enum PatchPackageCodec {
         guard payload.project.id == envelope.packageID else {
             throw PatchPackageError.invalidPasswordOrCorruptedPackage
         }
+        // 3106 schema 3 private packages restrict workspace inspection.
+        // Import them only after owner-copy permissions are implemented.
+        guard !payload.project.isPrivate else {
+            throw PatchPackageError.unsupportedVersion
+        }
         try validate(payload.project)
         guard payload.replacementDigests.count == payload.project.rules.count else {
             throw PatchPackageError.invalidPasswordOrCorruptedPackage
@@ -283,6 +293,9 @@ enum PatchPackageCodec {
         let name = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty,
               name.utf8.count <= 120,
+              project.author == project.author.trimmingCharacters(in: .whitespacesAndNewlines),
+              project.author.utf8.count <= 256,
+              !project.author.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               !project.allBundleIdentifiers.isEmpty else {
             throw PatchPackageError.invalidProject
         }
@@ -351,7 +364,7 @@ enum PatchPackageCodec {
         } catch {
             throw PatchPackageError.invalidPasswordOrCorruptedPackage
         }
-        guard (minimumSchemaVersion...latestSchemaVersion).contains(envelope.schemaVersion) else {
+        guard (minimumSchemaVersion...maximumReadableSchemaVersion).contains(envelope.schemaVersion) else {
             throw PatchPackageError.unsupportedVersion
         }
         guard envelope.keyFingerprint.count == 32,
@@ -361,7 +374,7 @@ enum PatchPackageCodec {
         }
         if envelope.isPasswordProtected {
             guard envelope.publicContentKey == nil,
-                  (minimumSchemaVersion...latestSchemaVersion).contains(
+                  (minimumSchemaVersion...maximumReadableSchemaVersion).contains(
                     envelope.keyAADVersion ?? envelope.schemaVersion
                   ),
                   envelope.kdfSalt?.count == 16,
