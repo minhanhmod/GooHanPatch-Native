@@ -194,6 +194,7 @@ struct ContentView: View {
     // This URL is public configuration, NOT a password or secret.
     private let serverURL = "https://gohanpatch-adminpatch.zcloudviet.xyz"
     @AppStorage("GooHanThemeHex") private var themeHex = "#FF4757"
+    @AppStorage(GooHanPackagePreference.storageKey) private var packagePreference = "auto"
     @State private var game = "free_fire"
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
     @State private var categories: [GooCategory] = GooCache.loadCategories()
@@ -226,6 +227,14 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var color: Color { Color(gooHex: themeHex) }
+    // UI package format selection only; it must never be interpreted as a
+    // successful sandbox grant or a working .3106 patch backend.
+    private var selectedPackageFormat: String {
+        let os = AppInfo.versionTuple
+        return GooHanPackagePreference.effectiveFormat(
+            rawValue: packagePreference, major: os.major, minor: os.minor
+        )
+    }
     private var availableCategories: [GooCategory] {
         // Keep a category visible while its active patches still need restoration.
         let activeIDs = Set(catalog.filter { GooCache.hasReceipt(for: $0) }
@@ -234,7 +243,11 @@ struct ContentView: View {
             .sorted { $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder }
     }
     private var visible: [GooPatch] {
-        catalog.filter { ($0.categoryId ?? $0.game) == game && ($0.enabled || GooCache.hasReceipt(for: $0)) }
+        catalog.filter {
+            ($0.categoryId ?? $0.game) == game &&
+            ($0.enabled || GooCache.hasReceipt(for: $0)) &&
+            ($0.packageFormat.lowercased() == selectedPackageFormat || GooCache.hasReceipt(for: $0))
+        }
             .sorted { $0.sortOrder == $1.sortOrder ? $0.feature < $1.feature : $0.sortOrder < $1.sortOrder }
     }
     var body: some View {
@@ -369,6 +382,12 @@ struct ContentView: View {
                     }
                 }
                 Text(GooPublicText.withoutBundleIdentifiers(notice)).font(.footnote).foregroundColor(.white.opacity(0.62))
+                Text("Định dạng đang chọn: .\(selectedPackageFormat)")
+                    .font(.caption.weight(.semibold)).foregroundColor(color)
+                if selectedPackageFormat == "3106" {
+                    Text("Gói .3106 chưa được GooHan hỗ trợ áp dụng. Đang chuẩn bị codec và backend; không tự báo thành công.")
+                        .font(.caption).foregroundColor(.orange)
+                }
             }
         }
     }
@@ -398,7 +417,15 @@ struct ContentView: View {
                         get: { _ = redrawReceipt; return GooCache.hasReceipt(for: patch) },
                         set: { newValue in Task { await toggle(patch, on: newValue) } }
                     ))
-                    .labelsHidden().tint(color).disabled(busyId != nil || reconciling)
+                    .labelsHidden().tint(color)
+                    .disabled(busyId != nil || reconciling ||
+                              (!active && (!GooHanPackagePreference.canApply(format: patch.packageFormat) ||
+                                !ExploitSupportPolicy.isSupported(
+                                    major: AppInfo.versionTuple.major,
+                                    minor: AppInfo.versionTuple.minor,
+                                    patch: AppInfo.versionTuple.patch,
+                                    build: AppInfo.osBuild
+                                ))))
                     .accessibilityLabel(active ? restoreLabel : applyLabel)
                 }
             }
@@ -422,6 +449,26 @@ struct ContentView: View {
                                     .overlay(Circle().stroke(.white, lineWidth: themeHex == item.1 ? 2.5 : 0))
                             }.accessibilityLabel(item.0)
                         }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Chế độ gói Patch").font(.headline)
+                        Picker("Chế độ gói Patch", selection: $packagePreference) {
+                            Text("Tự động").tag("auto")
+                            Text("3105").tag("3105")
+                            Text("3106").tag("3106")
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Đang chọn .\(selectedPackageFormat). Tự động ưu tiên .3106 trên iOS 26.7+/27.x; các phiên bản trước ưu tiên .3105.")
+                            .font(.footnote).foregroundColor(.secondary)
+                        if selectedPackageFormat == "3106" {
+                            Text("Chế độ .3106 hiện chỉ cho xem thư viện. Chưa có engine/codec .3106 trong GooHan nên không thể bật Patch.")
+                                .font(.footnote).foregroundColor(.orange)
+                        } else {
+                            Text("Chọn .3105 không vượt qua giới hạn quyền của iOS. Chỉ thiết bị có backend hoạt động mới áp dụng Patch.")
+                                .font(.footnote).foregroundColor(.secondary)
+                        }
+                        Text("Các gói đang bật vẫn hiển thị để có thể khôi phục dù bạn đổi chế độ.")
+                            .font(.caption).foregroundColor(.secondary)
                     }
                     if let link = URL(string: supportUrl), link.scheme == "https" {
                         Link("Hỗ trợ", destination: link)
