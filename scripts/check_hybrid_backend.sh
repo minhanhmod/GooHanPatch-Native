@@ -32,6 +32,26 @@ for (label, major, minor, patch, build, expectedProposal, expectedIntegrated) in
     precondition(integrated == expectedIntegrated, "\(label) integrated \(integrated), expected \(expectedIntegrated)")
     print("PASS \(label): proposed=\(proposal.rawValue) integrated=\(integrated.rawValue)")
 }
+let packageFormatChecks: [(String, String, Int, Int, String)] = [
+    ("auto / 18.7", "auto", 18, 7, "3105"),
+    ("auto / 26.6", "auto", 26, 6, "3105"),
+    ("auto / 26.7", "auto", 26, 7, "3106"),
+    ("auto / 27.0", "auto", 27, 0, "3106"),
+    ("auto / 27.2", "auto", 27, 2, "3106"),
+    ("manual legacy / 27.2", "3105", 27, 2, "3105"),
+    ("manual modern / 18", "3106", 18, 7, "3106"),
+    ("invalid preference fallback", "invalid", 18, 7, "3105"),
+]
+for (label, preference, major, minor, expected) in packageFormatChecks {
+    let actual = GooHanPackagePreference.effectiveFormat(
+        rawValue: preference, major: major, minor: minor
+    )
+    precondition(actual == expected, "\(label) got \(actual), expected \(expected)")
+    print("PASS \(label): format=.\(actual)")
+}
+precondition(GooHanPackagePreference.canApply(format: "3105"))
+precondition(!GooHanPackagePreference.canApply(format: "3106"))
+print("HYBRID_PACKAGE_MODE_TESTS_PASS")
 print("HYBRID_POLICY_TESTS_PASS")
 SWIFT
 swiftc ThreeOneOSFive/helpers/SupportPolicy.swift "$scratch/main.swift" -o "$scratch/check_hybrid"
