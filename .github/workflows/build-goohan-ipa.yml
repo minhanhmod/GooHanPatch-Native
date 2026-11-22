@@ -30,6 +30,10 @@ jobs:
         shell: bash
         run: bash scripts/check_hybrid_backend.sh
 
+      - name: Verify 3106 schema-3 import compatibility
+        shell: bash
+        run: bash scripts/check_3106_schema3.sh
+
       - name: Validate signed-IPA audit tool
         shell: bash
         run: |
