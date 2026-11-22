@@ -118,3 +118,39 @@ enum HybridBackendAdvisor {
                "worse_query_ready=\(worseQueryImplemented) app_group_required=\(needsAppGroup)"
     }
 }
+
+
+// MARK: - User-selectable package format preference
+//
+// This controls which package FORMAT is shown by the Admin catalog.
+// It does NOT select or enable a sandbox backend or make .3106 patches
+// executable. The effective selection never bypasses write verification.
+enum GooHanPackagePreference: String, CaseIterable {
+    case automatic = "auto"
+    case legacy3105 = "3105"
+    case modern3106 = "3106"
+
+    static let storageKey = "gohan.hybrid.package-format"
+
+    static func effectiveFormat(
+        rawValue: String, major: Int, minor: Int
+    ) -> String {
+        switch GooHanPackagePreference(rawValue: rawValue) ?? .automatic {
+        case .legacy3105: return "3105"
+        case .modern3106: return "3106"
+        case .automatic:
+            // 3106's proposed backend starts at 26.7; older supported OS
+            // versions continue to prefer the 3105 package workflow.
+            if major >= 27 || (major == 26 && minor >= 7) {
+                return "3106"
+            }
+            return "3105"
+        }
+    }
+
+    // Until a real decoder/verified write backend is integrated, the
+    // experimental mode remains view-only. Restore is handled separately.
+    static func canApply(format: String) -> Bool {
+        format == "3105"
+    }
+}
