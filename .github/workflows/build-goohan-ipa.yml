@@ -30,6 +30,12 @@ jobs:
         shell: bash
         run: bash scripts/check_hybrid_backend.sh
 
+      - name: Validate signed-IPA audit tool
+        shell: bash
+        run: |
+          python3 -m py_compile scripts/audit_signed_ipa.py
+          python3 scripts/audit_signed_ipa.py --help > /dev/null
+
       - name: Show Xcode version
         run: |
           xcodebuild -version
