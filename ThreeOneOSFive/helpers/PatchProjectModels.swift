@@ -47,6 +47,9 @@ struct PatchDirectory: Codable, Identifiable, Hashable {
 struct PatchProject: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
+    // Schema 3 (3106) metadata; legacy packages default to empty/false.
+    var author: String
+    var isPrivate: Bool
     var createdAt: Date
     var updatedAt: Date
     var bundleIdentifiers: [String]
@@ -56,6 +59,8 @@ struct PatchProject: Codable, Identifiable, Hashable {
     init(
         id: UUID = UUID(),
         name: String,
+        author: String = "",
+        isPrivate: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         bundleIdentifiers: [String] = [],
@@ -64,6 +69,8 @@ struct PatchProject: Codable, Identifiable, Hashable {
     ) {
         self.id = id
         self.name = name
+        self.author = author
+        self.isPrivate = isPrivate
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.bundleIdentifiers = bundleIdentifiers
@@ -80,6 +87,8 @@ struct PatchProject: Codable, Identifiable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id
         case name
+        case author
+        case isPrivate
         case createdAt
         case updatedAt
         case bundleIdentifiers
@@ -91,6 +100,8 @@ struct PatchProject: Codable, Identifiable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        author = try container.decodeIfPresent(String.self, forKey: .author) ?? ""
+        isPrivate = try container.decodeIfPresent(Bool.self, forKey: .isPrivate) ?? false
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         bundleIdentifiers = try container.decodeIfPresent(
@@ -108,6 +119,9 @@ struct PatchProject: Codable, Identifiable, Hashable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
+        // Preserve old schema 1/2 output when these optional fields are absent.
+        if !author.isEmpty { try container.encode(author, forKey: .author) }
+        if isPrivate { try container.encode(isPrivate, forKey: .isPrivate) }
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encode(bundleIdentifiers, forKey: .bundleIdentifiers)
