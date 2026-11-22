@@ -26,6 +26,10 @@ jobs:
           fi
           echo 'PASS: no bundled .3105 files; GOHAN scheme found'
 
+      - name: Check Hybrid iOS backend policy
+        shell: bash
+        run: bash scripts/check_hybrid_backend.sh
+
       - name: Show Xcode version
         run: |
           xcodebuild -version
