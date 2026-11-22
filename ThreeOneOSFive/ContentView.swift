@@ -385,7 +385,7 @@ struct ContentView: View {
                 Text("Định dạng đang chọn: .\(selectedPackageFormat)")
                     .font(.caption.weight(.semibold)).foregroundColor(color)
                 if selectedPackageFormat == "3106" {
-                    Text("Gói .3106 chưa được GooHan hỗ trợ áp dụng. Đang chuẩn bị codec và backend; không tự báo thành công.")
+                    Text("Đã hỗ trợ đọc gói .3106 schema 3 không riêng tư. Chưa có backend áp dụng .3106; công tắc vẫn khóa để tránh báo thành công sai.")
                         .font(.caption).foregroundColor(.orange)
                 }
             }
@@ -461,7 +461,7 @@ struct ContentView: View {
                         Text("Đang chọn .\(selectedPackageFormat). Tự động ưu tiên .3106 trên iOS 26.7+/27.x; các phiên bản trước ưu tiên .3105.")
                             .font(.footnote).foregroundColor(.secondary)
                         if selectedPackageFormat == "3106" {
-                            Text("Chế độ .3106 hiện chỉ cho xem thư viện. Chưa có engine/codec .3106 trong GooHan nên không thể bật Patch.")
+                            Text("Chế độ .3106 hiện chỉ cho xem thư viện và đọc gói schema 3 không riêng tư. Backend áp dụng .3106 chưa được tích hợp nên chưa thể bật Patch.")
                                 .font(.footnote).foregroundColor(.orange)
                         } else {
                             Text("Chọn .3105 không vượt qua giới hạn quyền của iOS. Chỉ thiết bị có backend hoạt động mới áp dụng Patch.")
