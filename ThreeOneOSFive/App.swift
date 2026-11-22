@@ -98,6 +98,7 @@ class AppState: ObservableObject {
 
     func detectSupport() {
         let v = AppInfo.versionTuple
+        log(HybridBackendAdvisor.diagnostic(major: v.major, minor: v.minor, patch: v.patch, build: AppInfo.osBuild))
         let supported = ExploitSupportPolicy.isSupported(
             major: v.major,
             minor: v.minor,
