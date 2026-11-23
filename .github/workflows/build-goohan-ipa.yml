@@ -108,3 +108,131 @@ jobs:
             dist/GooHanPatch-experimental-unsigned.ipa
             dist/GooHanPatch-experimental-unsigned.ipa.sha256
           if-no-files-found: error
+
+
+  # Build the entire upstream 3106 application and backend as a separate,
+  # isolated native baseline. This is NOT the existing GooHan client; no
+  # partial/mock worse_query adapter is substituted for upstream code.
+  build-native-3106-engine:
+    if: github.ref == 'refs/heads/gohan-hybrid-ios27-test'
+    runs-on: macos-15
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact 3106 upstream source
+        uses: actions/checkout@v4
+        with:
+          repository: QuinnTang74/3106
+          ref: 832bad906c06d92f55cabf799166f00d45d6a978
+          path: upstream3106
+          persist-credentials: false
+
+      - name: Verify full upstream engine and license source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream3106
+          test "$(git rev-parse HEAD)" = "832bad906c06d92f55cabf799166f00d45d6a978"
+          test -f ThreeOneOSSix/exploit/worse_query.m
+          test -f ThreeOneOSSix/exploit/worse_query.h
+          test -f ThreeOneOSSix/helpers/SandboxAccess.swift
+          test -f ThreeOneOSSix/helpers/KernelExploit.swift
+          test -f ThreeOneOSSix/helpers/PatchTransaction.swift
+          test -f ThreeOneOSSix/ThreeOneOSSix.entitlements
+          test -f LICENSE
+          test -f NOTICE.md
+          echo "PASS: original 3106 native source and all backend components present"
+
+      # Only the visible name is adjusted. Preserve the original bundle ID,
+      # original App Group entitlement request, all engine and UI source, and
+      # all upstream grant/write/restore flows for a clean baseline.
+      - name: Set GooHan experimental display name only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import plistlib
+          p = Path("upstream3106/ThreeOneOSSix/Info.plist")
+          with p.open("rb") as f:
+              info = plistlib.load(f)
+          assert info["CFBundleIdentifier"] == "com.qingtang.3106"
+          info["CFBundleDisplayName"] = "GooHan 3106 Engine"
+          with p.open("wb") as f:
+              plistlib.dump(info, f, sort_keys=False)
+          project = Path("upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj")
+          old = "INFOPLIST_KEY_CFBundleDisplayName = 3106;"
+          content = project.read_text(encoding="utf-8")
+          assert content.count(old) == 2
+          project.write_text(
+              content.replace(old, 'INFOPLIST_KEY_CFBundleDisplayName = "GooHan 3106 Engine";'),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Build complete upstream 3106 iPhone engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream3106
+          xcodebuild -version
+          xcodebuild \
+            -project ThreeOneOSSix.xcodeproj \
+            -scheme 3106 \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/native-3106-build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package isolated 3106 engine IPA and its GPL source
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$GITHUB_WORKSPACE/native-3106-build/Build/Products/Release-iphoneos/3106.app"
+          test -d "$APP"
+          test -f "$APP/3106"
+          mkdir -p "$GITHUB_WORKSPACE/native-3106-output/Payload"
+          ditto "$APP" "$GITHUB_WORKSPACE/native-3106-output/Payload/3106.app"
+          cd "$GITHUB_WORKSPACE/native-3106-output"
+          /usr/bin/zip -q -r -y 3106-upstream-engine-for-GooHan-unsigned.ipa Payload
+          /usr/bin/unzip -t 3106-upstream-engine-for-GooHan-unsigned.ipa | tail -n 2
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/3106.app/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' Payload/3106.app/Info.plist
+          shasum -a 256 3106-upstream-engine-for-GooHan-unsigned.ipa > 3106-upstream-engine-for-GooHan-unsigned.ipa.sha256
+          cp "$GITHUB_WORKSPACE/upstream3106/LICENSE" .
+          cp "$GITHUB_WORKSPACE/upstream3106/NOTICE.md" .
+          # Include the complete corresponding upstream source, not only a
+          # binary. The one-file display-name-only edit is in this workflow.
+          git -C "$GITHUB_WORKSPACE/upstream3106" archive --format=zip \
+            --output="$PWD/3106-upstream-source-832bad9.zip" \
+            832bad906c06d92f55cabf799166f00d45d6a978
+          cat > READ_ME_FIRST.txt <<'EOF'
+          GOOHAN iOS27 - FULL UPSTREAM 3106 ENGINE BASELINE
+          Source: QuinnTang74/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978
+          License: GPL-3.0; see LICENSE, NOTICE.md and included source archive.
+          This is the full upstream 3106 app with only its display name changed.
+          Its Bundle ID is still com.qingtang.3106; it is NOT the GooHan Admin/License app.
+          This baseline isolates the iOS 27 backend before combining it with GooHan.
+          The resulting IPA is unsigned. iOS 27 worse_query requires a valid
+          signing profile with a matching App Groups entitlement. A wildcard
+          profile or an unsupported signer will not provide that capability.
+          Do not replace your existing GooHan IPA with this baseline.
+          EOF
+
+      - name: Upload independent full 3106 engine baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: GooHan-full-3106-native-engine-baseline
+          path: |
+            native-3106-output/3106-upstream-engine-for-GooHan-unsigned.ipa
+            native-3106-output/3106-upstream-engine-for-GooHan-unsigned.ipa.sha256
+            native-3106-output/3106-upstream-source-832bad9.zip
+            native-3106-output/LICENSE
+            native-3106-output/NOTICE.md
+            native-3106-output/READ_ME_FIRST.txt
+          if-no-files-found: error
