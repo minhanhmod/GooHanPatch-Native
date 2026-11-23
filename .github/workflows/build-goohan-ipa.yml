@@ -241,3 +241,115 @@ jobs:
             native-3106-output/NOTICE.md
             native-3106-output/READ_ME_FIRST.txt
           if-no-files-found: error
+
+
+  # The first ACTUAL GooHan application based on the full 3106 backend:
+  # overlays GooHan Admin/License onto upstream 3106's project without
+  # replacing its sandbox, transaction, cache recovery or file access engine.
+  build-goohan-full-3106:
+    if: github.ref == 'refs/heads/gohan-hybrid-ios27-test'
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout GooHan Admin and License overlay
+        uses: actions/checkout@v4
+        with:
+          path: gohan
+          persist-credentials: false
+
+      - name: Checkout pinned full upstream 3106 source
+        uses: actions/checkout@v4
+        with:
+          repository: QuinnTang74/3106
+          ref: 832bad906c06d92f55cabf799166f00d45d6a978
+          path: upstream3106
+          persist-credentials: false
+
+      - name: Integrate GooHan Admin and License into original 3106 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream3106 rev-parse HEAD)" = "832bad906c06d92f55cabf799166f00d45d6a978"
+          python3 gohan/scripts/integrate_goohan_3106.py upstream3106 gohan
+          grep -q 'GooHan3106Remote.swift in Sources' upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj
+          grep -q 'worse_query.m in Sources' upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj
+          grep -q 'SandboxAccess.swift in Sources' upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj
+
+      - name: Build GooHan on the complete 3106 engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream3106
+          xcodebuild \
+            -project ThreeOneOSSix.xcodeproj \
+            -scheme 3106 \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/gohan-native3106-build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package GooHan native 3106 IPA, source and license
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$GITHUB_WORKSPACE/gohan-native3106-build/Build/Products/Release-iphoneos/3106.app"
+          test -d "$APP" && test -f "$APP/3106"
+          mkdir -p "$GITHUB_WORKSPACE/gohan3106-dist/Payload"
+          ditto "$APP" "$GITHUB_WORKSPACE/gohan3106-dist/Payload/3106.app"
+          cd "$GITHUB_WORKSPACE/gohan3106-dist"
+          /usr/bin/zip -q -r -y GooHan-Patch-full-3106-native-unsigned.ipa Payload
+          /usr/bin/unzip -t GooHan-Patch-full-3106-native-unsigned.ipa | tail -n 2
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/3106.app/Info.plist)" = "com.qingtang.3106"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' Payload/3106.app/Info.plist
+          shasum -a 256 GooHan-Patch-full-3106-native-unsigned.ipa > GooHan-Patch-full-3106-native-unsigned.ipa.sha256
+          cp "$GITHUB_WORKSPACE/upstream3106/LICENSE" .
+          cp "$GITHUB_WORKSPACE/upstream3106/NOTICE.md" .
+          cp "$GITHUB_WORKSPACE/gohan/LICENSE" GooHan-LICENSE.txt
+          # Full corresponding, patched source: .git metadata excluded.
+          cd "$GITHUB_WORKSPACE"
+          /usr/bin/zip -q -r gohan3106-dist/GooHan-3106-native-corresponding-source.zip \
+            upstream3106/ThreeOneOSSix upstream3106/ThreeOneOSSix.xcodeproj \
+            gohan/bridge/GooHan3106Remote.swift \
+            gohan/scripts/integrate_goohan_3106.py \
+            gohan/ThreeOneOSFive/helpers/LicenseManager.swift \
+            upstream3106/LICENSE upstream3106/NOTICE.md
+          cat > gohan3106-dist/READ_ME_FIRST.txt <<'EOF'
+          GOOHAN PATCH - FULL 3106 NATIVE ENGINE (EXPERIMENTAL)
+          Original backend: QuinnTang74/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978.
+          Full native worse_query, SandboxAccess, DevicePatchService and
+          PatchTransaction remain from upstream; no substitute sandbox driver.
+          GooHan's server-side LicenseManager and remote Patch Library are
+          compiled into the same native 3106 app.
+          On 3106's home screen open 'GooHan Patch - Dong bo tu Admin'.
+          This is NOT yet the merged 3105/3106 hybrid. GooHan's old IPA
+          remains separately installable.
+          Bundle ID: com.qingtang.3106 (so it replaces any separately
+          installed original 3106 app, NOT the existing GooHan Patch app).
+          SIGNING: use a valid explicit App ID / provisioning profile with
+          an App Groups entitlement. Unsigned IPA cannot carry a valid grant.
+          Applying remote patches is not guaranteed: iOS permissions, the
+          actual signed entitlements and device compatibility must permit it.
+          Never claim an Apply succeeded without the native write receipt.
+          License/remote client storage is separate from the old GooHan app.
+          This experimental source is GPL-3.0 with upstream attribution.
+          EOF
+
+      - name: Upload GooHan full-native-3106 integrated IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GooHan-Patch-full-native-3106-integrated
+          path: |
+            gohan3106-dist/GooHan-Patch-full-3106-native-unsigned.ipa
+            gohan3106-dist/GooHan-Patch-full-3106-native-unsigned.ipa.sha256
+            gohan3106-dist/GooHan-3106-native-corresponding-source.zip
+            gohan3106-dist/LICENSE
+            gohan3106-dist/NOTICE.md
+            gohan3106-dist/GooHan-LICENSE.txt
+            gohan3106-dist/READ_ME_FIRST.txt
+          if-no-files-found: error
