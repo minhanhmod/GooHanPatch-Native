@@ -386,7 +386,7 @@ struct ContentView: View {
                 Text("Định dạng đang chọn: .\(selectedPackageFormat)")
                     .font(.caption.weight(.semibold)).foregroundColor(color)
                 if selectedPackageFormat == "3106" {
-                    Text("Đã hỗ trợ đọc gói .3106 schema 3 không riêng tư. Chưa có backend áp dụng .3106; công tắc vẫn khóa để tránh báo thành công sai.")
+                    Text("Admin có thể kiểm tra gói .3106 schema 3 không riêng tư; iPhone kiểm tra kế hoạch đã ký xác thực bằng SHA-256. Chưa có backend ghi/khôi phục .3106.")
                         .font(.caption).foregroundColor(.orange)
                 }
             }
@@ -480,7 +480,7 @@ struct ContentView: View {
                         Text("Đang chọn .\(selectedPackageFormat). Tự động ưu tiên .3106 trên iOS 26.7+/27.x; các phiên bản trước ưu tiên .3105.")
                             .font(.footnote).foregroundColor(.secondary)
                         if selectedPackageFormat == "3106" {
-                            Text("Chế độ .3106 hiện chỉ cho xem thư viện và đọc gói schema 3 không riêng tư. Backend áp dụng .3106 chưa được tích hợp nên chưa thể bật Patch.")
+                            Text("Chế độ .3106 hỗ trợ đồng bộ và kiểm tra kế hoạch từ Admin (không ghi tệp). Chưa tích hợp backend Apply/Restore trên iOS 27 nên công tắc vẫn khóa.")
                                 .font(.footnote).foregroundColor(.orange)
                         } else {
                             Text("Chọn .3105 không vượt qua giới hạn quyền của iOS. Chỉ thiết bị có backend hoạt động mới áp dụng Patch.")
@@ -704,9 +704,9 @@ struct ContentView: View {
             let plan = try jsonDecoder().decode(GooPlan.self, from: data)
             let project = try project(from: plan, for: patch)
             let total = project.rules.reduce(0) { $0 + $1.replacementData.count }
-            message = "Đã kiểm tra .3106: \\(project.rules.count) tệp, \\(total) byte, Bundle ID hợp lệ. Chưa ghi vào game vì backend iOS 27 chưa được tích hợp."
+            message = "Đã kiểm tra .3106: \(project.rules.count) tệp, \(total) byte, Bundle ID hợp lệ. Chưa ghi vào game vì backend iOS 27 chưa được tích hợp."
         } catch {
-            message = "Kiểm tra .3106 thất bại: \\(error.localizedDescription)"
+            message = "Kiểm tra .3106 thất bại: \(error.localizedDescription)"
         }
     }
 
