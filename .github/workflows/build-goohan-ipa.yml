@@ -1,4 +1,4 @@
-name: Build GooHan Patch experimental IPA
+name: Build GooHan Patch - Official 3106 candidate
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ on:
           - baseline
   push:
     branches:
-      - gohan-hybrid-ios27-test
+      - gohan-official-3106
     paths:
       - .github/workflows/build-goohan-ipa.yml
       - bridge/GooHan3106Remote.swift
@@ -261,7 +261,7 @@ jobs:
   # overlays GooHan Admin/License onto upstream 3106's project without
   # replacing its sandbox, transaction, cache recovery or file access engine.
   build-goohan-full-3106:
-    if: (github.event_name == 'push' || inputs.build_target == 'integrated') && github.ref == 'refs/heads/gohan-hybrid-ios27-test'
+    if: (github.event_name == 'push' || inputs.build_target == 'integrated') && github.ref == 'refs/heads/gohan-official-3106'
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
@@ -290,6 +290,21 @@ jobs:
           grep -q 'GooHan3106Remote.swift in Sources' upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj
           grep -q 'worse_query.m in Sources' upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj
           grep -q 'SandboxAccess.swift in Sources' upstream3106/ThreeOneOSSix.xcodeproj/project.pbxproj
+          # Official mode must launch GooHan directly, never expose an
+          # unlicensed 3106 home screen behind a dismissible sheet.
+          grep -q 'GooHan3106RemoteView()' upstream3106/ThreeOneOSSix/App.swift
+          ! grep -q '                ContentView()' upstream3106/ThreeOneOSSix/App.swift
+          grep -q 'GH6Palette.all' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
+          grep -q 'gohan.hybrid.package-format' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
+          grep -q 'DevicePatchService.apply(project: project)' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
+          grep -q 'DevicePatchService.restore(receipt:' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
+          # Do not silently alter the native 3106 engine files known to work.
+          git -C upstream3106 diff --quiet -- \
+            ThreeOneOSSix/exploit/worse_query.m \
+            ThreeOneOSSix/helpers/SandboxAccess.swift \
+            ThreeOneOSSix/helpers/KernelExploit.swift \
+            ThreeOneOSSix/helpers/PatchTransaction.swift \
+            ThreeOneOSSix/helpers/DevicePatchService.swift
 
       - name: Build GooHan on the complete 3106 engine
         shell: bash
@@ -380,7 +395,7 @@ jobs:
       - name: Upload GooHan full-native-3106 integrated IPA
         uses: actions/upload-artifact@v4
         with:
-          name: GooHan-Patch-full-native-3106-integrated
+          name: GooHan-Patch-official-candidate-3106
           path: |
             gohan3106-dist/GooHan-Patch-full-3106-native-unsigned.ipa
             gohan3106-dist/GooHan-Patch-full-3106-native-unsigned.ipa.sha256
