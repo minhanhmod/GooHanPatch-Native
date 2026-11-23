@@ -116,17 +116,29 @@ struct GooHan3106RemoteView: View {
     @State private var packages: [GH6Package] = []
     @State private var categories: [GH6Category] = []
     @State private var selectedCategory = "free_fire_max"
+    @AppStorage("GooHanThemeHex") private var themeHex = "#F479B7"
+    @AppStorage("gohan.hybrid.package-format") private var packagePreference = "auto"
+    @State private var showSettings = false
     @State private var busyPackageID: String?
     @State private var syncing = false
     @State private var statusText = "Đang kết nối GooHan Admin…"
     @State private var refreshReceipt = 0
-    @Environment(\.dismiss) private var dismiss
+    private var accent: Color { Color(gh6Hex: themeHex) }
+    private var effectiveFormat: String {
+        let os = AppInfo.versionTuple
+        if packagePreference == "3105" { return "3105" }
+        if packagePreference == "3106" { return "3106" }
+        // Upstream 3106 already selects its native kernel/bad_query/worse_query
+        // backend by iOS version. This preference only chooses the Admin format.
+        return os.major >= 27 || (os.major == 26 && os.minor >= 7) ? "3106" : "3105"
+    }
 
     private var visiblePackages: [GH6Package] {
-        packages.filter {
-            $0.enabled &&
-            $0.packageFormat == "3106" &&
-            ($0.categoryId ?? $0.game) == selectedCategory
+        packages.filter { patch in
+            let active = GH6PlanStorage.activeReceipt(for: patch.id) != nil
+            return (patch.categoryId ?? patch.game) == selectedCategory &&
+                (patch.enabled || active) &&
+                (patch.packageFormat == effectiveFormat || active)
         }
         .sorted {
             $0.sortOrder == $1.sortOrder
@@ -153,156 +165,378 @@ struct GooHan3106RemoteView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
+                    hero
+                    categoryPicker
+                    syncCard
                     HStack {
-                        Image(systemName: "bolt.shield.fill")
-                            .font(.largeTitle).foregroundColor(.pink)
-                        VStack(alignment: .leading) {
-                            Text("GOOHAN PATCH")
-                                .font(.system(size: 26, weight: .black, design: .rounded))
-                            Text("Native 3106 engine • Admin ZCloudViet")
-                                .font(.caption).foregroundColor(.secondary)
-                        }
+                        Label("CHỌN CHỨC NĂNG", systemImage: "square.stack.3d.up")
+                            .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                        Spacer()
+                        Text("\(visiblePackages.count) gói")
+                            .foregroundColor(.white.opacity(0.58))
                     }
-                    .padding(.top, 8)
+                    .foregroundColor(accent)
 
-                    if !licenseManager.isActive {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Kích hoạt License GooHan").font(.headline)
-                            SecureField("Nhập License Key", text: $inputKey)
-                                .textInputAutocapitalization(.characters)
-                                .autocorrectionDisabled()
-                                .textFieldStyle(.roundedBorder)
-                            Button("Xác thực License") {
-                                licenseManager.activate(key: inputKey)
-                            }
-                            .buttonStyle(.borderedProminent).tint(.pink)
-                            .disabled(inputKey.isEmpty || licenseManager.isBusy)
-                            if licenseManager.isBusy { ProgressView() }
-                            if let error = licenseManager.message {
-                                Text(error).font(.footnote).foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(16)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    } else {
-                        HStack {
-                            Text("Đã xác thực GooHan Admin")
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Button {
-                                Task { await sync() }
-                            } label: {
-                                Label("Đồng bộ", systemImage: "arrow.clockwise")
-                            }
-                            .disabled(syncing || busyPackageID != nil)
-                        }
-
-                        if !filteredCategories.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(filteredCategories) { category in
-                                        Button(category.name) {
-                                            selectedCategory = category.id
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .tint(category.id == selectedCategory ? .pink : .secondary)
-                                    }
-                                }
-                            }
-                        }
-
-                        Text("Thư viện .3106 • \(visiblePackages.count) gói")
-                            .font(.headline)
+                    if licenseManager.isActive {
                         if visiblePackages.isEmpty {
-                            Text("Không có gói .3106 được phát hành trong mục này.")
-                                .font(.footnote).foregroundColor(.secondary)
+                            panel {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Chưa có chức năng")
+                                        .font(.headline)
+                                    Text("Chưa có gói .\(effectiveFormat) trong mục này. Hãy đồng bộ từ Admin.")
+                                        .font(.footnote)
+                                        .foregroundColor(.white.opacity(0.62))
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         ForEach(visiblePackages) { patch in
-                            let active = GH6PlanStorage.activeReceipt(for: patch.id) != nil
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(patch.feature).font(.headline)
-                                        Text("v\(patch.version) • \(active ? "Đang bật" : "Đã tắt")")
-                                            .font(.caption).foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    if busyPackageID == patch.id {
-                                        ProgressView()
-                                    } else {
-                                        Toggle(
-                                            patch.feature,
-                                            isOn: Binding(
-                                                get: {
-                                                    _ = refreshReceipt
-                                                    return GH6PlanStorage.activeReceipt(for: patch.id) != nil
-                                                },
-                                                set: { on in
-                                                    Task { await toggle(patch, on: on) }
-                                                }
-                                            )
-                                        )
-                                        .labelsHidden()
-                                        .tint(.pink)
-                                        .disabled(busyPackageID != nil || syncing)
-                                    }
-                                }
-                                if !patch.description.isEmpty {
-                                    Text(patch.description)
-                                        .font(.caption).foregroundColor(.secondary)
-                                }
-                            }
-                            .padding(15)
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                            packageCard(patch)
                         }
+                    } else {
+                        licenseCard
                     }
 
-                    if !recoverable.isEmpty {
-                        VStack(alignment: .leading, spacing: 9) {
-                            Label("Khôi phục tệp đã áp dụng", systemImage: "arrow.uturn.backward.circle")
-                                .font(.headline)
-                            Text("Có thể khôi phục ngay cả khi License hết hạn hoặc gói bị gỡ khỏi Admin.")
-                                .font(.caption).foregroundColor(.secondary)
-                            ForEach(recoverable) { entry in
-                                Button("Khôi phục \(entry.name)") {
-                                    Task { await restore(entry) }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(busyPackageID != nil)
-                            }
-                        }
-                        .padding(14)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                    }
+                    if !recoverable.isEmpty { recoveryCard }
 
-                    Text(statusText)
-                        .font(.footnote)
-                        .textSelection(.enabled)
+                    panel {
+                        HStack(alignment: .top, spacing: 11) {
+                            Image(systemName: "info.circle.fill").foregroundColor(accent)
+                            Text(statusText)
+                                .font(.footnote)
+                                .foregroundColor(.white.opacity(0.82))
+                                .textSelection(.enabled)
+                        }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-
-                    Text("Áp dụng/khôi phục bằng DevicePatchService của 3106. Yêu cầu chữ ký có App Groups hợp lệ trên iOS 27. Sao lưu được giữ cho tới khi hoàn tất khôi phục; thao tác lỗi không được báo thành công.")
+                    }
+                    Text("GOOHAN iOS • Native 3106 • Backup & Restore")
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.43))
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 14)
                 }
-                .padding(18)
+                .padding(.horizontal, 17)
+                .padding(.top, 20)
+                .padding(.bottom, 26)
             }
-            .navigationTitle("GooHan • 3106")
+            .background(GH6GridBackground(tint: accent))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Xong") { dismiss() }
+                ToolbarItem(placement: .principal) {
+                    Text("GOHAN iOS")
+                        .font(.system(size: 17, weight: .black, design: .rounded))
+                        .foregroundColor(accent)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundColor(accent)
+                    }
+                    .accessibilityLabel("Cài đặt GooHan")
                 }
             }
         }
-        .tint(.pink)
+        .preferredColorScheme(.dark)
+        .tint(accent)
+        .sheet(isPresented: $showSettings) { settingsPanel }
         .task { licenseManager.beginLaunchSession() }
         .onChange(of: licenseManager.isActive) { nowActive in
             if nowActive { Task { await sync() } }
         }
+    }
+
+    private var hero: some View {
+        panel {
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(spacing: 9) {
+                    Circle().fill(accent).frame(width: 9, height: 9)
+                    Text("GÔHÀNIOS • IPA")
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundColor(accent)
+                    Spacer()
+                    Image(systemName: "shield.lefthalf.filled")
+                        .foregroundColor(accent)
+                }
+                Text("GôHan iOS")
+                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                Text("GôHan iOS iPA - Aim - Chams - Mod Skin")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.62))
+                Text("AIM • CHAMS • MOD")
+                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                    .foregroundColor(accent)
+            }
+        }
+    }
+
+    private var categoryPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                if filteredCategories.isEmpty {
+                    categoryButton("free_fire", title: "Free Fire")
+                    categoryButton("free_fire_max", title: "Free Fire MAX")
+                    categoryButton("free_fire_vn", title: "Free Fire VN")
+                } else {
+                    ForEach(filteredCategories) { category in
+                        categoryButton(category.id, title: category.name)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func categoryButton(_ id: String, title: String) -> some View {
+        Button {
+            selectedCategory = id
+        } label: {
+            Text(title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .foregroundColor(.white)
+                .padding(.horizontal, 17)
+                .padding(.vertical, 14)
+                .background(
+                    selectedCategory == id ? accent.opacity(0.24) : Color.white.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(selectedCategory == id ? accent : .white.opacity(0.1), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var syncCard: some View {
+        panel {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack {
+                    Image(systemName: "cloud.fill")
+                        .foregroundColor(accent)
+                    Text("ĐỒNG BỘ TỪ ADMIN")
+                        .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    Spacer()
+                    if syncing {
+                        ProgressView().tint(accent)
+                    } else {
+                        Button {
+                            Task { await sync() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .foregroundColor(accent)
+                        }
+                        .disabled(!licenseManager.isActive || busyPackageID != nil)
+                        .accessibilityLabel("Đồng bộ thư viện từ Admin")
+                    }
+                }
+                Text("Các chức năng được cập nhật từ phía Admin.")
+                    .font(.footnote)
+                    .foregroundColor(.white.opacity(0.62))
+                Text("Định dạng đang chọn: .\(effectiveFormat)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(accent)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.shield")
+                    Text("Engine \(SandboxAccess.backend.displayName) • Apply & Restore")
+                }
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.55))
+            }
+        }
+    }
+
+    private var licenseCard: some View {
+        panel {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Kích hoạt License GooHan", systemImage: "key.fill")
+                    .font(.headline)
+                    .foregroundColor(accent)
+                SecureField("Nhập License Key", text: $inputKey)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    licenseManager.activate(key: inputKey)
+                } label: {
+                    Text("Kích hoạt")
+                        .font(.subheadline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(inputKey.isEmpty || licenseManager.isBusy)
+                if licenseManager.isBusy { ProgressView().tint(accent) }
+                if let message = licenseManager.message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.67))
+                }
+            }
+        }
+    }
+
+    private func packageCard(_ patch: GH6Package) -> some View {
+        let active = GH6PlanStorage.activeReceipt(for: patch.id) != nil
+        return panel {
+            HStack(spacing: 13) {
+                Image(systemName: active ? "checkmark.shield.fill" : "bolt.shield.fill")
+                    .font(.system(size: 24))
+                    .frame(width: 35)
+                    .foregroundColor(accent)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(patch.feature)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("v\(patch.version) • \(active ? "Đang bật" : "Đã tắt") • .\(patch.packageFormat)")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.55))
+                    if !patch.description.isEmpty {
+                        Text(patch.description)
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.52))
+                            .lineLimit(2)
+                    }
+                    Text(active ? "Tắt & Khôi phục" : "Bật Chức Năng")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(accent)
+                }
+                Spacer(minLength: 6)
+                if busyPackageID == patch.id {
+                    ProgressView().tint(accent)
+                } else {
+                    Toggle("", isOn: Binding(
+                        get: {
+                            _ = refreshReceipt
+                            return GH6PlanStorage.activeReceipt(for: patch.id) != nil
+                        },
+                        set: { on in Task { await toggle(patch, on: on) } }
+                    ))
+                    .labelsHidden()
+                    .tint(accent)
+                    .disabled(busyPackageID != nil || syncing || (!active && !patch.enabled))
+                    .accessibilityLabel(active ? "Tắt và khôi phục" : "Bật Patch")
+                }
+            }
+        }
+    }
+
+    private var recoveryCard: some View {
+        panel {
+            VStack(alignment: .leading, spacing: 9) {
+                Label("KHÔI PHỤC CÁC GÓI ĐANG BẬT", systemImage: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(accent)
+                Text("Luôn cho phép khôi phục kể cả khi đổi chế độ, License hết hạn hoặc Admin gỡ gói.")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.62))
+                ForEach(recoverable) { entry in
+                    Button {
+                        Task { await restore(entry) }
+                    } label: {
+                        Label("Khôi phục \(entry.name)", systemImage: "arrow.uturn.backward")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .disabled(busyPackageID != nil || syncing)
+                }
+            }
+        }
+    }
+
+    private func panel<Content: View>(
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        content()
+            .padding(17)
+            .background(
+                Color(red: 0.093, green: 0.103, blue: 0.13).opacity(0.97),
+                in: RoundedRectangle(cornerRadius: 21)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 21)
+                    .stroke(.white.opacity(0.095), lineWidth: 1)
+            )
+    }
+
+    private var settingsPanel: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Màu iPA")
+                        .font(.headline)
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6),
+                        spacing: 16
+                    ) {
+                        ForEach(0..<GH6Palette.all.count, id: \.self) { index in
+                            let item = GH6Palette.all[index]
+                            Button { themeHex = item.1 } label: {
+                                Circle()
+                                    .fill(Color(gh6Hex: item.1))
+                                    .frame(width: 36, height: 36)
+                                    .overlay(
+                                        Circle().stroke(
+                                            .white,
+                                            lineWidth: themeHex == item.1 ? 2.5 : 0
+                                        )
+                                    )
+                            }
+                            .accessibilityLabel(item.0)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("Chế độ gói Patch").font(.headline)
+                        Picker("Chế độ gói Patch", selection: $packagePreference) {
+                            Text("Tự động").tag("auto")
+                            Text("3105").tag("3105")
+                            Text("3106").tag("3106")
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Đang chọn .\(effectiveFormat). Tự động dùng 3106 cho iOS 26.7+/27.x, và 3105 cho phiên bản trước.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                        Text("Đổi chế độ không thay đổi quyền truy cập; các gói đã bật luôn có thể khôi phục.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    Text("Backend thực tế: \(SandboxAccess.backend.displayName)")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    if let expires = licenseManager.expirationDate {
+                        Text("License có hiệu lực đến: \(expires.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    Button("Đồng bộ ngay") {
+                        showSettings = false
+                        Task { await sync() }
+                    }
+                    .disabled(!licenseManager.isActive || syncing)
+                    Button("Đăng xuất License") {
+                        licenseManager.deactivate()
+                        showSettings = false
+                    }
+                    .foregroundColor(.orange)
+                    Text("GooHan iOS • Engine mã nguồn 3106 theo giấy phép GPL-3.0. Việc áp dụng tệp phụ thuộc vào backend, phiên bản iOS và quyền của ứng dụng.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(20)
+            }
+            .navigationTitle("GôHan iOS • Cài đặt")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Xong") { showSettings = false }
+                }
+            }
+        }
+        .tint(accent)
+        .preferredColorScheme(.dark)
     }
 
     private func decoder() -> JSONDecoder {
@@ -342,12 +576,12 @@ struct GooHan3106RemoteView: View {
     }
 
     private func project(from plan: GH6Plan, patch: GH6Package) throws -> PatchProject {
-        guard patch.packageFormat == "3106",
+        guard (patch.packageFormat == "3105" || patch.packageFormat == "3106"),
               plan.format == "3105-project-v1" || plan.format == "3106-project-v1",
               plan.game == patch.game,
               let projectID = UUID(uuidString: plan.packageId),
               (1...100).contains(plan.rules.count) else {
-            throw GH6Error.text("Kế hoạch Patch .3106 không hợp lệ")
+            throw GH6Error.text("Kế hoạch Patch không hợp lệ")
         }
         guard patch.game == "free_fire" || patch.game == "free_fire_max" else {
             throw GH6Error.text("Hiện hỗ trợ Free Fire / Free Fire MAX")
@@ -416,7 +650,7 @@ struct GooHan3106RemoteView: View {
         do {
             if on {
                 try await licenseManager.ensureAuthorized()
-                guard patch.enabled, patch.packageFormat == "3106",
+                guard patch.enabled, patch.packageFormat == effectiveFormat,
                       patch.id.count == 32,
                       patch.id.allSatisfy({ $0.isHexDigit }),
                       patch.downloadPath == "/downloads/" + patch.id,
@@ -428,7 +662,7 @@ struct GooHan3106RemoteView: View {
                 // The native 3106 SandboxAccess backend is selected by iOS.
                 // Never treat presence of a .3106 package as proof of R/W.
                 guard SandboxAccess.backend != .unsupported else {
-                    throw GH6Error.text("iOS hiện tại không có backend 3106")
+                    throw GH6Error.text("iOS hiện tại không có backend Patch khả dụng")
                 }
                 if SandboxAccess.needsWorseQuery && !SandboxAccess.hasAppGroup {
                     throw GH6Error.text("IPA đã ký thiếu quyền App Groups cần cho iOS 27")
@@ -468,5 +702,50 @@ struct GooHan3106RemoteView: View {
         } catch {
             statusText = "Không thể \(on ? "bật" : "tắt") \(patch.feature): \(error.localizedDescription)"
         }
+    }
+}
+
+
+private enum GH6Palette {
+    static let all: [(String, String)] = [
+        ("Đỏ", "#FF4757"), ("Đỏ đậm", "#CD354C"), ("Cam", "#F97342"), ("Hổ phách", "#EFA53E"),
+        ("Vàng", "#FFD45B"), ("Chanh", "#C8DB57"), ("Lục", "#69D688"), ("Ngọc", "#2CC999"),
+        ("Xanh biển", "#2BCBB3"), ("Cyan", "#34CBDC"), ("Lam", "#4CA6FF"), ("Xanh trời", "#71BCFF"),
+        ("Dương", "#458CF8"), ("Cobalt", "#576AF0"), ("Indigo", "#7770EF"), ("Tím", "#9D70E8"),
+        ("Oải hương", "#C196F6"), ("Hồng tím", "#D27BD7"), ("Hồng", "#F479B7"), ("San hô", "#FF8A83"),
+        ("Đồng", "#CE9B69"), ("Bạc", "#A7B8CF"), ("Trắng", "#F1F5FC"), ("Xám", "#8795AA")
+    ]
+}
+private extension Color {
+    init(gh6Hex hex: String) {
+        let raw = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        let n = UInt64(raw, radix: 16) ?? 0xF479B7
+        self.init(red: Double((n >> 16) & 255) / 255,
+                  green: Double((n >> 8) & 255) / 255,
+                  blue: Double(n & 255) / 255)
+    }
+}
+private struct GH6GridBackground: View {
+    let tint: Color
+    var body: some View {
+        ZStack {
+            Color(red: 0.042, green: 0.051, blue: 0.075)
+            RadialGradient(colors: [tint.opacity(0.25), .clear],
+                           center: .topTrailing, startRadius: 10, endRadius: 500)
+            Canvas { context, size in
+                var path = Path()
+                let gap: CGFloat = 30
+                for x in stride(from: CGFloat(0), through: size.width + gap, by: gap) {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                for y in stride(from: CGFloat(0), through: size.height + gap, by: gap) {
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                context.stroke(path, with: .color(tint.opacity(0.12)), lineWidth: 0.7)
+            }
+        }
+        .ignoresSafeArea()
     }
 }
