@@ -2,6 +2,16 @@ name: Build GooHan Patch experimental IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Select IPA build'
+        type: choice
+        required: true
+        default: integrated
+        options:
+          - integrated
+          - legacy
+          - baseline
   push:
     branches:
       - gohan-hybrid-ios27-test
@@ -16,6 +26,7 @@ permissions:
 
 jobs:
   build-iphone:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_target == 'legacy'
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -122,7 +133,7 @@ jobs:
   # isolated native baseline. This is NOT the existing GooHan client; no
   # partial/mock worse_query adapter is substituted for upstream code.
   build-native-3106-engine:
-    if: github.ref == 'refs/heads/gohan-hybrid-ios27-test'
+    if: github.event_name == 'workflow_dispatch' && inputs.build_target == 'baseline' && github.ref == 'refs/heads/gohan-hybrid-ios27-test'
     runs-on: macos-15
     timeout-minutes: 55
     permissions:
@@ -250,7 +261,7 @@ jobs:
   # overlays GooHan Admin/License onto upstream 3106's project without
   # replacing its sandbox, transaction, cache recovery or file access engine.
   build-goohan-full-3106:
-    if: github.ref == 'refs/heads/gohan-hybrid-ios27-test'
+    if: (github.event_name == 'push' || inputs.build_target == 'integrated') && github.ref == 'refs/heads/gohan-hybrid-ios27-test'
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
@@ -285,6 +296,9 @@ jobs:
         run: |
           set -euo pipefail
           cd upstream3106
+          # Capture full Swift/Xcode errors, and surface the relevant compiler
+          # messages in the job summary rather than drowning in build output.
+          set +e
           xcodebuild \
             -project ThreeOneOSSix.xcodeproj \
             -scheme 3106 \
@@ -295,7 +309,27 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
-            build
+            build 2>&1 | tee "$GITHUB_WORKSPACE/goohan-native3106-xcodebuild.log"
+          result=${PIPESTATUS[0]}
+          set -e
+          if [ "$result" -ne 0 ]; then
+            {
+              echo '## GooHan native 3106 build failed'
+              echo 'The last Xcode/Swift diagnostics:'
+              echo '```text'
+              grep -E '(error:|BUILD FAILED|SwiftCompile|CompileSwift)' "$GITHUB_WORKSPACE/goohan-native3106-xcodebuild.log" | tail -n 45 || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$result"
+
+      - name: Upload full native compiler log on error
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GooHan-native-3106-build-error-log
+          path: goohan-native3106-xcodebuild.log
+          if-no-files-found: ignore
 
       - name: Package GooHan native 3106 IPA, source and license
         shell: bash
