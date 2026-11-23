@@ -220,6 +220,7 @@ struct ContentView: View {
     @State private var maxName = "Free Fire MAX"
     @State private var busyId: String?
     @State private var syncing = false
+    @State private var inspectingId: String?
     @State private var message = "Đang chờ đồng bộ"
     @State private var showSettings = false
     @State private var redrawReceipt = 0
@@ -429,6 +430,24 @@ struct ContentView: View {
                     .accessibilityLabel(active ? restoreLabel : applyLabel)
                 }
             }
+            if patch.packageFormat == "3106" && !active {
+                Button {
+                    Task { await inspectPackage(patch) }
+                } label: {
+                    HStack(spacing: 7) {
+                        if inspectingId == patch.id {
+                            ProgressView().tint(color)
+                        } else {
+                            Image(systemName: "checkmark.shield")
+                        }
+                        Text(inspectingId == patch.id ? "Đang kiểm tra gói .3106" : "Kiểm tra gói .3106 (không ghi tệp)")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(color)
+                }
+                .disabled(inspectingId != nil || syncing || busyId != nil)
+                .buttonStyle(.plain)
+            }
         }
     }
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -602,10 +621,11 @@ struct ContentView: View {
         }
     }
     private func project(from plan: GooPlan, for patch: GooPatch) throws -> PatchProject {
-        guard plan.format == "3105-project-v1", plan.game == patch.game,
+        guard (patch.packageFormat == "3105" || patch.packageFormat == "3106"),
+              plan.format == "3105-project-v1", plan.game == patch.game,
               let uuid = UUID(uuidString: plan.packageId),
               (1...100).contains(plan.rules.count) else {
-            throw GooError.message("Kế hoạch .3105 không hợp lệ")
+            throw GooError.message("Kế hoạch Patch không hợp lệ")
         }
         // New packages carry the authenticated target bundle in the server plan;
         // old FF/MAX packages remain compatible with the original fixed mapping.
@@ -617,7 +637,7 @@ struct ContentView: View {
               !bundleID.lowercased().hasPrefix("group.com.apple."),
               let serverBundle = patch.targetBundleId ?? ((plan.bundleId == nil) ? fallback : nil),
               bundleID == serverBundle else {
-            throw GooError.message("Ứng dụng đích trong gói .3105 không khớp dữ liệu Admin")
+            throw GooError.message("Ứng dụng đích trong gói Patch không khớp dữ liệu Admin")
         }
         var seen = Set<String>()
         let rules: [PatchRule] = try plan.rules.map { rule in
@@ -653,6 +673,40 @@ struct ContentView: View {
         }.value
         if count > 0 {
             message = "Đã phát hiện \(count) gói được khôi phục từ bên ngoài. Công tắc đã cập nhật về OFF; có thể bật lại."
+        }
+    }
+
+    // Download and validate an Admin-distributed .3106 plan without requesting
+    // filesystem access. This is NOT a substitute for a verified iOS 27 backend.
+    private func inspectPackage(_ patch: GooPatch) async {
+        guard inspectingId == nil && busyId == nil && !syncing else { return }
+        inspectingId = patch.id
+        defer { inspectingId = nil }
+        do {
+            guard patch.packageFormat == "3106", patch.enabled else {
+                throw GooError.message("Chỉ kiểm tra gói .3106 đã được xuất bản")
+            }
+            guard patch.id.count == 32, patch.id.allSatisfy({ $0.isHexDigit }),
+                  patch.downloadPath == "/downloads/" + patch.id,
+                  patch.size > 0 && patch.size <= 75 * 1024 * 1024,
+                  patch.sha256.count == 64,
+                  patch.sha256.allSatisfy({ $0.isHexDigit }) else {
+                throw GooError.message("Metadata gói .3106 không hợp lệ")
+            }
+            try await licenseManager.ensureAuthorized()
+            let base = try baseURL()
+            let remote = base.appendingPathComponent("downloads").appendingPathComponent(patch.id)
+            let data = try await getData(remote)
+            let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard data.count == patch.size, hash == patch.sha256.lowercased() else {
+                throw GooError.message("Gói .3106 không khớp SHA-256 hoặc kích thước")
+            }
+            let plan = try jsonDecoder().decode(GooPlan.self, from: data)
+            let project = try project(from: plan, for: patch)
+            let total = project.rules.reduce(0) { $0 + $1.replacementData.count }
+            message = "Đã kiểm tra .3106: \\(project.rules.count) tệp, \\(total) byte, Bundle ID hợp lệ. Chưa ghi vào game vì backend iOS 27 chưa được tích hợp."
+        } catch {
+            message = "Kiểm tra .3106 thất bại: \\(error.localizedDescription)"
         }
     }
 
