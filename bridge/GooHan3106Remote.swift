@@ -111,6 +111,7 @@ private enum GH6PlanStorage {
 }
 
 struct GooHan3106RemoteView: View {
+    @EnvironmentObject private var appState: AppState
     @StateObject private var licenseManager = LicenseManager()
     @State private var inputKey = ""
     @State private var packages: [GH6Package] = []
@@ -346,6 +347,25 @@ struct GooHan3106RemoteView: View {
                 }
                 .font(.caption2)
                 .foregroundColor(.white.opacity(0.55))
+
+                if SandboxAccess.backend == .kernel && appState.needsUnlock {
+                    Button {
+                        // Upstream 3106 requires explicit user consent before
+                        // starting the legacy kernel chain; never run at launch.
+                        appState.runKernelExploitIfNeeded()
+                    } label: {
+                        Label(
+                            appState.kernelExploitRunning ? "Đang kích hoạt quyền truy cập…" :
+                                "Kích hoạt quyền truy cập iOS 17/18",
+                            systemImage: "lock.open.fill"
+                        )
+                        .font(.caption.weight(.semibold))
+                    }
+                    .disabled(appState.kernelExploitRunning)
+                    Text("Chỉ dành cho phiên bản hỗ trợ. Thao tác kernel có rủi ro treo hoặc khởi động lại thiết bị; chỉ thực hiện khi bạn chủ động chọn.")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
             }
         }
     }
