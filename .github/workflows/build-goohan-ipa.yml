@@ -34,6 +34,14 @@ jobs:
         shell: bash
         run: bash scripts/check_3106_schema3.sh
 
+      - name: Verify Admin 3105/3106 publication compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/goohan-admin-check
+          /tmp/goohan-admin-check/bin/python -m pip install -q -r server/requirements.txt
+          /tmp/goohan-admin-check/bin/python -m unittest discover -s tests -p 'test_3106_admin.py' -v
+
       - name: Validate signed-IPA audit tool
         shell: bash
         run: |
