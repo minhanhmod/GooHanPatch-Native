@@ -188,6 +188,69 @@ private enum GooCache {
     }
 }
 
+// This exercises the real PatchTransaction implementation, but ONLY inside
+// a uniquely named temporary directory owned by the GooHan app. It does not
+// resolve or access another application's container, and it grants no extra
+// iOS privileges.
+private enum GooHanSandboxTransactionProbe {
+    static func run() throws -> String {
+        let fm = FileManager.default
+        let bundleID = "com.goohan.sandboxprobe"
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("GooHanSandboxProbe-\\(UUID().uuidString)", isDirectory: true)
+        let documents = root.appendingPathComponent("Documents", isDirectory: true)
+        let target = documents.appendingPathComponent("probe.bin")
+        let backups = root.appendingPathComponent("Backups", isDirectory: true)
+        let original = Data("GOOHAN_SANDBOX_ORIGINAL".utf8)
+        let replacement = Data("GOOHAN_SANDBOX_REPLACED".utf8)
+
+        try fm.createDirectory(at: documents, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        try original.write(to: target, options: .atomic)
+        let project = PatchProject(
+            name: "GooHan sandbox transaction diagnostic",
+            bundleIdentifiers: [bundleID],
+            rules: [
+                PatchRule(
+                    bundleID: bundleID,
+                    relativePath: "Documents/probe.bin",
+                    replacementFilename: "probe.bin",
+                    replacementData: replacement
+                )
+            ]
+        )
+        let resolve: (String) throws -> URL = { identifier in
+            guard identifier == bundleID else {
+                throw GooError.message("Sandbox probe: Bundle ID không hợp lệ")
+            }
+            return root
+        }
+
+        let receipt = try PatchTransaction.apply(
+            project: project,
+            backupRoot: backups,
+            containerResolver: resolve
+        )
+        // Attempt recovery even when an intermediate assertion fails. All
+        // paths remain inside the unique, temporary probe directory.
+        do {
+            guard try Data(contentsOf: target) == replacement,
+                  PatchTransaction.latestReceipt(projectID: project.id, backupRoot: backups) != nil else {
+                throw GooError.message("Sandbox probe: ghi/biên nhận không khớp")
+            }
+            try PatchTransaction.restore(receipt: receipt, containerResolver: resolve)
+            guard try Data(contentsOf: target) == original,
+                  PatchTransaction.latestReceipt(projectID: project.id, backupRoot: backups) == nil else {
+                throw GooError.message("Sandbox probe: khôi phục chưa chính xác")
+            }
+        } catch {
+            try? PatchTransaction.restore(receipt: receipt, containerResolver: resolve)
+            throw error
+        }
+        return "PASS: ghi → kiểm byte → lưu biên nhận → khôi phục bản gốc. Chỉ thử trong sandbox GooHan; chưa xác nhận quyền ghi ứng dụng khác."
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var licenseManager: LicenseManager
     // The endpoint remains connected but is not exposed in the user settings UI.
@@ -221,6 +284,7 @@ struct ContentView: View {
     @State private var busyId: String?
     @State private var syncing = false
     @State private var inspectingId: String?
+    @State private var sandboxTesting = false
     @State private var message = "Đang chờ đồng bộ"
     @State private var showSettings = false
     @State private var redrawReceipt = 0
@@ -386,8 +450,25 @@ struct ContentView: View {
                 Text("Định dạng đang chọn: .\(selectedPackageFormat)")
                     .font(.caption.weight(.semibold)).foregroundColor(color)
                 if selectedPackageFormat == "3106" {
-                    Text("Admin có thể kiểm tra gói .3106 schema 3 không riêng tư; iPhone kiểm tra kế hoạch đã ký xác thực bằng SHA-256. Chưa có backend ghi/khôi phục .3106.")
+                    Text("Gói .3106 được kiểm tra tính toàn vẹn bằng SHA-256. Backend ghi/khôi phục trên iOS 27 chưa được tích hợp.")
                         .font(.caption).foregroundColor(.orange)
+                    Button {
+                        Task { await runSandboxTransactionProbe() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if sandboxTesting {
+                                ProgressView().tint(color)
+                            } else {
+                                Image(systemName: "checkmark.shield")
+                            }
+                            Text(sandboxTesting ? "Đang thử giao dịch trong sandbox…" :
+                                 "Thử ghi & khôi phục trong sandbox GooHan")
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(color)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(sandboxTesting || syncing || inspectingId != nil || busyId != nil)
                 }
             }
         }
@@ -673,6 +754,20 @@ struct ContentView: View {
         }.value
         if count > 0 {
             message = "Đã phát hiện \(count) gói được khôi phục từ bên ngoài. Công tắc đã cập nhật về OFF; có thể bật lại."
+        }
+    }
+
+    private func runSandboxTransactionProbe() async {
+        guard !sandboxTesting && !syncing && busyId == nil && inspectingId == nil else { return }
+        sandboxTesting = true
+        defer { sandboxTesting = false }
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                try GooHanSandboxTransactionProbe.run()
+            }.value
+            message = "Kiểm tra giao dịch GooHan: \\(result)"
+        } catch {
+            message = "Kiểm tra giao dịch GooHan thất bại: \\(error.localizedDescription). Không có thay đổi nào tới ứng dụng khác."
         }
     }
 
