@@ -42,6 +42,10 @@ jobs:
           /tmp/goohan-admin-check/bin/python -m pip install -q -r server/requirements.txt
           /tmp/goohan-admin-check/bin/python -m unittest discover -s tests -p 'test_3106_admin.py' -v
 
+      - name: Check 3106 preflight status display
+        shell: bash
+        run: python3 scripts/check_3106_ui_strings.py
+
       - name: Validate signed-IPA audit tool
         shell: bash
         run: |
