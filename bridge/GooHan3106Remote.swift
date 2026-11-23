@@ -110,9 +110,10 @@ struct GooHan3106RemoteView: View {
     }
 
     private var filteredCategories: [GH6Category] {
-        categories.filter {
-            $0.enabled || packages.contains {
-                ($0.categoryId ?? $0.game) == $0.id
+        categories.filter { category in
+            category.enabled || packages.contains { patch in
+                (patch.categoryId ?? patch.game) == category.id &&
+                GH6PlanStorage.activeReceipt(for: patch.id) != nil
             }
         }.sorted {
             $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder
