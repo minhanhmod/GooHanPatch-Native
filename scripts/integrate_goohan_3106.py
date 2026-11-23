@@ -24,6 +24,12 @@ assert (upstream / "ThreeOneOSSix/helpers/SandboxAccess.swift").is_file()
 assert (upstream / "ThreeOneOSSix/helpers/DevicePatchService.swift").is_file()
 
 app_root = upstream / "ThreeOneOSSix"
+# Reuse GooHan's existing application icon (only visual asset replacement).
+icon_source = goohan / "ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+icon_target = app_root / "Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+if not icon_source.is_file() or not icon_target.is_file():
+    raise FileNotFoundError("GooHan / 3106 AppIcon image missing")
+shutil.copy2(icon_source, icon_target)
 shutil.copy2(
     goohan / "bridge/GooHan3106Remote.swift",
     app_root / "GooHan3106Remote.swift",
