@@ -7,6 +7,9 @@ on:
       - gohan-hybrid-ios27-test
     paths:
       - .github/workflows/build-goohan-ipa.yml
+      - bridge/GooHan3106Remote.swift
+      - scripts/integrate_goohan_3106.py
+      - ThreeOneOSFive/helpers/LicenseManager.swift
 
 permissions:
   contents: read
