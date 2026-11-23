@@ -2,6 +2,11 @@ name: Build GooHan Patch experimental IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - gohan-hybrid-ios27-test
+    paths:
+      - .github/workflows/build-goohan-ipa.yml
 
 permissions:
   contents: read
