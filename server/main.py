@@ -150,8 +150,8 @@ def public_config():
     return {**DEFAULT_CONFIG, **stored}
 
 
-def convert_3105(data: bytes, password: str, game: str) -> tuple[bytes, str]:
-    """Validate/decrypt a 3105PATCH project and produce a checked multi-file plan.
+def convert_patch_package(data: bytes, password: str, game: str) -> tuple[bytes, str, str]:
+    """Validate/decrypt 3105PATCH schema 1/2 and readable 3106 schema 3.
 
     This is not a sandbox escape. The iOS app applies the plan only within an
     explicitly selected, writable folder from the document picker.
@@ -162,8 +162,8 @@ def convert_3105(data: bytes, password: str, game: str) -> tuple[bytes, str]:
         env = plistlib.loads(data[len(PATCH_MAGIC):])
         version = env["schemaVersion"]
         package_id = str(uuid.UUID(env["packageID"])).upper()
-        if version not in (1, 2):
-            raise ValueError("Phiên bản .3105 không hỗ trợ")
+        if version not in (1, 2, 3):
+            raise ValueError("Schema của gói Patch chưa được hỗ trợ")
         if env.get("isPasswordProtected"):
             if not password:
                 raise ValueError("Gói .3105 được mã hóa: cần nhập mật khẩu của gói")
@@ -187,6 +187,8 @@ def convert_3105(data: bytes, password: str, game: str) -> tuple[bytes, str]:
                            f"3105PATCH/v{version}/payload/{package_id}".encode())
         payload = plistlib.loads(decrypted)
         project = payload["project"]
+        if version == 3 and project.get("isPrivate", False):
+            raise ValueError("Gói .3106 riêng tư chưa được hỗ trợ; không tự hạ cấp quyền riêng tư")
         if str(uuid.UUID(project["id"])).upper() != package_id:
             raise ValueError("ID gói không khớp")
         # Directory declarations are validated as relative paths, but we do not
@@ -226,11 +228,11 @@ def convert_3105(data: bytes, password: str, game: str) -> tuple[bytes, str]:
         binary = json_bytes(result)
         if len(binary) > 75 * 1024 * 1024:
             raise ValueError("Gói sau giải mã vượt giới hạn 75 MB")
-        return binary, f"{len(mapped)} tệp từ .3105"
+        return binary, f"{len(mapped)} tệp từ .{'3106' if version == 3 else '3105'}", ("3106" if version == 3 else "3105")
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError("Không thể giải mã/kiểm tra gói .3105; kiểm tra mật khẩu và định dạng") from e
+        raise ValueError("Không thể giải mã/kiểm tra gói Patch; kiểm tra mật khẩu và định dạng") from e
 
 
 # License codes are generated from a cryptographically secure 120-bit random suffix.
@@ -760,10 +762,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not payload:
                     raise ValueError("Cần tải tệp patch lên")
                 uploaded_name = form.get("upload_filename", "")
-                is_3105 = uploaded_name.lower().endswith(".3105") or payload.startswith(PATCH_MAGIC)
-                if is_3105:
-                    package_format = "3105"
-                    payload, target = convert_3105(payload, form.get("package_password", ""), game)
+                is_package = uploaded_name.lower().endswith((".3105", ".3106")) or payload.startswith(PATCH_MAGIC)
+                if is_package:
+                    if not payload.startswith(PATCH_MAGIC):
+                        raise ValueError("Gói Patch không có header 3105PATCH hợp lệ")
+                    payload, target, package_format = convert_patch_package(
+                        payload, form.get("package_password", ""), game
+                    )
+                    suffix = uploaded_name.lower().rsplit(".", 1)[-1]
+                    if suffix in ("3105", "3106") and suffix != package_format:
+                        raise ValueError(f"Đuôi .{suffix} không khớp schema; gói này là .{package_format}")
                 else:
                     package_format = "raw"
                     if not (1 <= len(target) <= 128 and re.fullmatch(r"[a-zA-Z0-9_.() -]+", target)):
@@ -842,7 +850,7 @@ ADMIN_HTML = """<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta
 <p class="muted subtitle">Chỉnh sửa chữ trên màn hình kích hoạt. Màn hình sử dụng nền lưới và màu đã chọn của GooHan Patch, kể cả khi người dùng chưa nhập Key.</p>
 <div class="grid" id="activationFields"></div>
 </div><p class="row"><span class="small">Các nội dung cập nhật khi app tải lại cấu hình. Tên dưới icon, icon, quyền iOS và bố cục SwiftUI cần build IPA mới.</span><button>Lưu nội dung</button></p><div class="small" id="configmsg"></div></form></section>
-<section class="panel"><span class="tag">02 / PATCH PUBLISHER</span><h2 id="formtitle">Đăng gói Patch mới (.3105 hoặc tệp đơn)</h2><p class="muted">Upload trực tiếp gói <b>.3105</b>. Máy chủ đọc các quy tắc trong gói; nếu được mã hóa, điền mật khẩu bên dưới. Không cần nhập tên tệp đích với .3105. Gói chỉ áp dụng trong thư mục mà iOS cho phép người dùng chọn.</p><form id="form"><div class="grid"><div><label>Danh mục</label><select name="game"><option value="free_fire">Free Fire</option><option value="free_fire_max">Free Fire MAX</option></select></div><div><label>Tên chức năng</label><input name="feature" maxlength="80" required></div><div><label>Phiên bản</label><input name="version" maxlength="32" value="1.0" required></div><div><label>Tên tệp đích (chỉ cần cho file đơn, bỏ trống khi dùng .3105)</label><input name="target_name" maxlength="128" placeholder="sample.dat"></div><div><label>Mô tả</label><input name="description" maxlength="280"></div><div><label>Thứ tự (thấp hiển thị trước)</label><input name="sort_order" type="number" min="-10000" max="10000" value="0" required></div><div><label>Xuất bản</label><select name="enabled"><option value="1">Hiển thị</option><option value="0">Ẩn</option></select></div><div><label>Gói .3105 hoặc tệp đơn (tối đa 50 MB)</label><input name="file" type="file" accept=".3105,.bin,.dat,.plist,.json,*/*" required></div><div><label>Mật khẩu của gói .3105 (nếu có, không lưu trên server)</label><input type="password" name="package_password" autocomplete="off" placeholder="Chỉ cần khi gói bị mã hóa"></div></div><p class="row"><span class="small">SHA-256 kiểm tra tính toàn vẹn khi app tải file.</span><span><button type="button" class="secondary" id="cancel" hidden>Hủy sửa</button> <button id="submit">Lưu Patch</button></span></p><div id="msg" class="small"></div></form></section>
+<section class="panel"><span class="tag">02 / PATCH PUBLISHER</span><h2 id="formtitle">Đăng gói Patch mới (.3105 / .3106 / tệp đơn)</h2><p class="muted">Upload gói <b>.3105</b> hoặc <b>.3106</b> (schema 3 không riêng tư). Máy chủ xác thực gói; nếu được mã hóa, điền mật khẩu. Chế độ .3106 hiện chỉ phân phối thư viện, chưa hỗ trợ áp dụng trên iOS. Gói chỉ áp dụng trong thư mục mà iOS cho phép người dùng chọn.</p><form id="form"><div class="grid"><div><label>Danh mục</label><select name="game"><option value="free_fire">Free Fire</option><option value="free_fire_max">Free Fire MAX</option></select></div><div><label>Tên chức năng</label><input name="feature" maxlength="80" required></div><div><label>Phiên bản</label><input name="version" maxlength="32" value="1.0" required></div><div><label>Tên tệp đích (chỉ cần cho file đơn)</label><input name="target_name" maxlength="128" placeholder="sample.dat"></div><div><label>Mô tả</label><input name="description" maxlength="280"></div><div><label>Thứ tự (thấp hiển thị trước)</label><input name="sort_order" type="number" min="-10000" max="10000" value="0" required></div><div><label>Xuất bản</label><select name="enabled"><option value="1">Hiển thị</option><option value="0">Ẩn</option></select></div><div><label>Gói .3105 / .3106 hoặc tệp đơn (tối đa 50 MB)</label><input name="file" type="file" accept=".3105,.3106,.bin,.dat,.plist,.json,*/*" required></div><div><label>Mật khẩu gói .3105 / .3106 (nếu có, không lưu trên server)</label><input type="password" name="package_password" autocomplete="off" placeholder="Chỉ cần khi gói bị mã hóa"></div></div><p class="row"><span class="small">SHA-256 kiểm tra tính toàn vẹn khi app tải file.</span><span><button type="button" class="secondary" id="cancel" hidden>Hủy sửa</button> <button id="submit">Lưu Patch</button></span></p><div id="msg" class="small"></div></form></section>
 <section class="panel"><span class="tag">03 / LIBRARY</span><div class="row"><h2>Gói Patch đã tạo</h2><button class="secondary" id="refresh">Làm mới</button></div><div id="list" class="muted"></div></section>
 </main><script>
 const csrf=document.querySelector('meta[name="csrf-token"]').content;
@@ -858,7 +866,7 @@ async function refresh(){try{const j=await asJSON('/api/admin/patches',{headers:
 left.append(elem('div',(p.game==='free_fire'?'Free Fire':'Free Fire MAX')+' · v'+p.version+' · '+p.target_name+' · '+(p.size/1024).toFixed(1)+' KB · '+(p.package_format==='3105'?'gói .3105':'tệp đơn'),'muted'),elem('div',p.description||'','small'),elem('div','SHA-256: '+p.sha256,'small'));
 const buttons=elem('div');const edit=elem('button','Sửa','secondary');edit.onclick=()=>{editing=p.id;for(const k of ['game','feature','version','target_name','description','sort_order','enabled'])form.elements[k].value=p[k]??'';form.elements.file.value='';form.elements.file.required=false;document.getElementById('formtitle').textContent='Cập nhật gói Patch';document.getElementById('cancel').hidden=false;msg.textContent='Có thể chỉ sửa tên/mô tả/trạng thái mà không cần tải lại file. Muốn đổi danh mục cần tải lại file.';window.scrollTo({top:0,behavior:'smooth'})};
 const del=elem('button','Xóa','danger');del.onclick=async()=>{if(!confirm('Xóa gói '+p.feature+'?'))return;try{await asJSON('/api/admin/patches/'+p.id,{method:'DELETE',headers:{'X-CSRF-Token':csrf}});await refresh()}catch(err){alert(err.message)}};buttons.append(edit,document.createTextNode(' '),del);header.append(left,buttons);card.append(header);root.append(card)}}catch(err){document.getElementById('list').textContent=err.message}}
-function reset(){editing=null;form.reset();form.elements.file.required=true;document.getElementById('cancel').hidden=true;document.getElementById('formtitle').textContent='Đăng gói Patch mới (.3105 hoặc tệp đơn)';msg.textContent=''}
+function reset(){editing=null;form.reset();form.elements.file.required=true;document.getElementById('cancel').hidden=true;document.getElementById('formtitle').textContent='Đăng gói Patch mới (.3105 / .3106 / tệp đơn)';msg.textContent=''}
 document.getElementById('cancel').onclick=reset;document.getElementById('refresh').onclick=refresh;
 form.onsubmit=async e=>{e.preventDefault();const button=document.getElementById('submit');button.disabled=true;msg.textContent='Đang tải...';try{if(editing&&!form.elements.file.files.length){const data={feature:form.elements.feature.value,version:form.elements.version.value,description:form.elements.description.value,sort_order:Number(form.elements.sort_order.value),enabled:Number(form.elements.enabled.value),game:form.elements.game.value};await asJSON('/api/admin/patches/'+editing+'/meta',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(data)})}else{await asJSON('/api/admin/patches'+(editing?'/'+editing:''),{method:'POST',headers:{'X-CSRF-Token':csrf},body:new FormData(form)})}reset();msg.textContent='Đã lưu';await refresh()}catch(err){msg.textContent=err.message}finally{button.disabled=false}};
 document.getElementById('logout').onclick=async()=>{await asJSON('/api/admin/logout',{method:'POST',headers:{'X-CSRF-Token':csrf}});location.replace('/admin')};
