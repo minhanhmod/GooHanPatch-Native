@@ -122,7 +122,7 @@ old_name = "INFOPLIST_KEY_CFBundleDisplayName = 3106;"
 if pbx.count(old_name) != 2:
     raise RuntimeError("Unexpected native Xcode display name settings")
 pbx = pbx.replace(
-    old_name, 'INFOPLIST_KEY_CFBundleDisplayName = "GooHan Patch 3106";'
+    old_name, 'INFOPLIST_KEY_CFBundleDisplayName = "GooHan Patch";'
 )
 project.write_text(pbx, encoding="utf-8")
 
@@ -130,7 +130,7 @@ info_path = app_root / "Info.plist"
 with info_path.open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.qingtang.3106"
-info["CFBundleDisplayName"] = "GooHan Patch 3106"
+info["CFBundleDisplayName"] = "GooHan Patch"
 with info_path.open("wb") as handle:
     plistlib.dump(info, handle, sort_keys=False)
 
