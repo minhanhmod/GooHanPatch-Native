@@ -248,18 +248,6 @@ struct GooHan3106RemoteView: View {
         .preferredColorScheme(.dark)
         .tint(accent)
         .sheet(isPresented: $showSettings) { settingsPanel }
-        .confirmationDialog(
-            "Xác nhận kích hoạt quyền truy cập",
-            isPresented: $showLegacyUnlockConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Tiếp tục kích hoạt", role: .destructive) {
-                appState.runKernelExploitIfNeeded()
-            }
-            Button("Hủy", role: .cancel) {}
-        } message: {
-            Text("Chỉ dành cho thiết bị iOS 17/18 tương thích. Quá trình kích hoạt quyền truy cập có thể khiến thiết bị treo hoặc khởi động lại.")
-        }
         .task { licenseManager.beginLaunchSession() }
         .onChange(of: licenseManager.isActive) { nowActive in
             if nowActive { Task { await sync() } }
@@ -540,7 +528,6 @@ struct GooHan3106RemoteView: View {
 
                     if SandboxAccess.backend == .kernel && appState.needsUnlock {
                         Button {
-                            showSettings = false
                             showLegacyUnlockConfirmation = true
                         } label: {
                             Label("Kích hoạt quyền truy cập", systemImage: "lock.open.fill")
@@ -571,6 +558,18 @@ struct GooHan3106RemoteView: View {
         }
         .tint(accent)
         .preferredColorScheme(.dark)
+        .confirmationDialog(
+            "Xác nhận kích hoạt quyền truy cập",
+            isPresented: $showLegacyUnlockConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Tiếp tục kích hoạt", role: .destructive) {
+                appState.runKernelExploitIfNeeded()
+            }
+            Button("Hủy", role: .cancel) {}
+        } message: {
+            Text("Chỉ dành cho thiết bị iOS 17/18 tương thích. Quá trình kích hoạt quyền truy cập có thể khiến thiết bị treo hoặc khởi động lại.")
+        }
     }
 
     private func decoder() -> JSONDecoder {
