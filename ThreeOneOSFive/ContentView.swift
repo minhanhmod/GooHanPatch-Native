@@ -197,7 +197,7 @@ private enum GooHanSandboxTransactionProbe {
         let fm = FileManager.default
         let bundleID = "com.goohan.sandboxprobe"
         let root = fm.temporaryDirectory
-            .appendingPathComponent("GooHanSandboxProbe-\\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("GooHanSandboxProbe-\(UUID().uuidString)", isDirectory: true)
         let documents = root.appendingPathComponent("Documents", isDirectory: true)
         let target = documents.appendingPathComponent("probe.bin")
         let backups = root.appendingPathComponent("Backups", isDirectory: true)
@@ -765,9 +765,9 @@ struct ContentView: View {
             let result = try await Task.detached(priority: .userInitiated) {
                 try GooHanSandboxTransactionProbe.run()
             }.value
-            message = "Kiểm tra giao dịch GooHan: \\(result)"
+            message = "Kiểm tra giao dịch GooHan: \(result)"
         } catch {
-            message = "Kiểm tra giao dịch GooHan thất bại: \\(error.localizedDescription). Không có thay đổi nào tới ứng dụng khác."
+            message = "Kiểm tra giao dịch GooHan thất bại: \(error.localizedDescription). Không có thay đổi nào tới ứng dụng khác."
         }
     }
 
