@@ -44,7 +44,7 @@ source = cv.read_text(encoding="utf-8")
 source = replace_once(
     source,
     "    @State private var showSettings = false",
-    "    @State private var showSettings = false\n    @State private var showGooHanRemote = false",
+    "    @State private var showSettings = false\n    @State private var showGooHanRemote = true",
 )
 source = replace_once(
     source,
