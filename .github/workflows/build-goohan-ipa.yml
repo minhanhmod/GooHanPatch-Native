@@ -46,6 +46,10 @@ jobs:
         shell: bash
         run: python3 scripts/check_3106_ui_strings.py
 
+      - name: Check sandbox write-and-restore diagnostic isolation
+        shell: bash
+        run: python3 scripts/check_sandbox_transaction_probe.py
+
       - name: Validate signed-IPA audit tool
         shell: bash
         run: |
