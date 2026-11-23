@@ -1,6 +1,8 @@
 import SwiftUI
 import Foundation
 import CryptoKit
+import Darwin
+import CoreFoundation
 
 private struct GooPatch: Codable, Identifiable, Hashable {
     let id: String
@@ -248,6 +250,69 @@ private enum GooHanSandboxTransactionProbe {
             throw error
         }
         return "PASS: ghi → kiểm byte → lưu biên nhận → khôi phục bản gốc. Chỉ thử trong sandbox GooHan; chưa xác nhận quyền ghi ứng dụng khác."
+    }
+}
+
+// Diagnostic only. Read the App Groups entitlement from the signed executable,
+// not from the unsigned Xcode project or the untrusted embedded provision file.
+// This makes no filesystem changes and NEVER grants access to another app.
+private enum GooHanSigningPreflight {
+    private typealias CreateSecTask = @convention(c) (UnsafeRawPointer?) -> UnsafeMutableRawPointer?
+    private typealias CopyEntitlement = @convention(c) (
+        UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
+    ) -> UnsafeMutableRawPointer?
+
+    // nil = Security runtime did not expose the entitlement query.
+    private static func signedAppGroups() -> [String]? {
+        guard let library = dlopen(
+            "/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY
+        ) else { return nil }
+        defer { dlclose(library) }
+        guard let createSymbol = dlsym(library, "SecTaskCreateFromSelf"),
+              let copySymbol = dlsym(library, "SecTaskCopyValueForEntitlement") else { return nil }
+        let create = unsafeBitCast(createSymbol, to: CreateSecTask.self)
+        let copy = unsafeBitCast(copySymbol, to: CopyEntitlement.self)
+        guard let task = create(nil) else { return nil }
+        defer { Unmanaged<AnyObject>.fromOpaque(task).release() }
+        guard let key = CFStringCreateWithCString(
+            kCFAllocatorDefault, "com.apple.security.application-groups",
+            CFStringBuiltInEncodings.UTF8.rawValue
+        ) else { return nil }
+        let keyPointer = Unmanaged.passUnretained(key).toOpaque()
+        guard let value = copy(task, keyPointer, nil) else { return [] }
+        let object = Unmanaged<AnyObject>.fromOpaque(value).takeRetainedValue()
+        guard let names = object as? [String] else { return nil }
+        return names.filter { $0.hasPrefix("group.") }
+    }
+
+    static func report() -> String {
+        let os = AppInfo.versionTuple
+        let candidate = HybridBackendAdvisor.proposedBackend(
+            major: os.major, minor: os.minor, patch: os.patch, build: AppInfo.osBuild
+        )
+        let integrated = HybridBackendAdvisor.integratedBackend(
+            major: os.major, minor: os.minor, patch: os.patch, build: AppInfo.osBuild
+        )
+        let groups = signedAppGroups()
+        let groupStatus: String
+        if let groups {
+            if groups.isEmpty {
+                groupStatus = "MISSING (IPA ký không có App Groups)"
+            } else {
+                let reachable = groups.contains {
+                    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
+                }
+                groupStatus = "có \(groups.count) group; vùng chia sẻ \(reachable ? "truy cập được" : "không khả dụng")"
+            }
+        } else {
+            groupStatus = "UNKNOWN (không đọc được entitlement)"
+        }
+        return "iOS \(os.major).\(os.minor).\(os.patch) / \(AppInfo.osBuild) • " +
+               "App Groups: \(groupStatus) • " +
+               "backend đề xuất: \(candidate.rawValue) • " +
+               "backend tích hợp: \(integrated.rawValue) • " +
+               "worse_query adapter: \(HybridBackendAdvisor.worseQueryImplemented ? "READY" : "MISSING"). " +
+               "Đây chỉ là chẩn đoán chữ ký/cấu hình; không thử ghi dữ liệu ứng dụng khác."
     }
 }
 
@@ -566,6 +631,18 @@ struct ContentView: View {
                         } else {
                             Text("Chọn .3105 không vượt qua giới hạn quyền của iOS. Chỉ thiết bị có backend hoạt động mới áp dụng Patch.")
                                 .font(.footnote).foregroundColor(.secondary)
+                        }
+                        if selectedPackageFormat == "3106" {
+                            Button {
+                                message = GooHanSigningPreflight.report()
+                                showSettings = false
+                            } label: {
+                                Label("Chẩn đoán App Groups và backend iOS 27",
+                                      systemImage: "checkmark.shield")
+                            }
+                            .buttonStyle(.bordered).tint(color)
+                            Text("Kiểm tra quyền ký IPA sau khi cài; không truy cập hoặc ghi dữ liệu game.")
+                                .font(.caption).foregroundColor(.secondary)
                         }
                         Text("Các gói đang bật vẫn hiển thị để có thể khôi phục dù bạn đổi chế độ.")
                             .font(.caption).foregroundColor(.secondary)
