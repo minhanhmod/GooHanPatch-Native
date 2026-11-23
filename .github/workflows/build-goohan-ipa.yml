@@ -50,6 +50,10 @@ jobs:
         shell: bash
         run: python3 scripts/check_sandbox_transaction_probe.py
 
+      - name: Check signed App Groups and backend diagnostic
+        shell: bash
+        run: python3 scripts/check_signed_app_group_preflight.py
+
       - name: Validate signed-IPA audit tool
         shell: bash
         run: |
