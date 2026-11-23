@@ -39,40 +39,28 @@ def replace_once(text: str, old: str, new: str) -> str:
         raise RuntimeError(f"Expected one injection anchor, found {n}: {old[:60]}")
     return text.replace(old, new, 1)
 
-cv = app_root / "ContentView.swift"
-source = cv.read_text(encoding="utf-8")
-source = replace_once(
-    source,
-    "    @State private var showSettings = false",
-    "    @State private var showSettings = false\n    @State private var showGooHanRemote = true",
+# GooHan becomes the app root (not a dismissible overlay). The complete
+# upstream 3106 services still initialize from App.swift and run unmodified.
+# The original 3106 home is deliberately not a License bypass route.
+app_file = app_root / "App.swift"
+native_app = app_file.read_text(encoding="utf-8")
+native_app = replace_once(
+    native_app,
+    "                ContentView()",
+    "                GooHan3106RemoteView()",
 )
-source = replace_once(
-    source,
-    "        .sheet(isPresented: $showSettings) { SettingsView() }",
-    "        .sheet(isPresented: $showSettings) { SettingsView() }\n"
-    "        .sheet(isPresented: $showGooHanRemote) { GooHan3106RemoteView() }",
+native_app = replace_once(
+    native_app,
+    "@State private var showOnboarding = OnboardingStore.shouldShow()",
+    "@State private var showOnboarding = false",
 )
-source = replace_once(
-    source,
-    "                onOpenLogs: openLogs\n            )\n        case .new:",
-    '                onOpenLogs: openLogs\n'
-    '            )\n'
-    '            .safeAreaInset(edge: .top) {\n'
-    '                Button {\n'
-    '                    showGooHanRemote = true\n'
-    '                } label: {\n'
-    '                    Label("GooHan Patch • Đồng bộ từ Admin", systemImage: "bolt.shield.fill")\n'
-    '                        .font(.subheadline.weight(.bold))\n'
-    '                        .frame(maxWidth: .infinity)\n'
-    '                        .padding(.vertical, 10)\n'
-    '                }\n'
-    '                .buttonStyle(.borderedProminent)\n'
-    '                .tint(.pink)\n'
-    '                .padding(.horizontal, 18)\n'
-    '            }\n'
-    '        case .new:',
-)
-cv.write_text(source, encoding="utf-8")
+# Updates now follow GooHan's controlled release process, not the upstream
+# app's public update prompt. Native support selection still runs on launch.
+native_app = native_app.replace("                    checkForUpdate()\n", "")
+native_app = native_app.replace("                    checkForUpdateThrottled()\n", "")
+native_app = native_app.replace("                checkForUpdate()\n", "")
+native_app = native_app.replace("                checkForUpdateThrottled()\n", "")
+app_file.write_text(native_app, encoding="utf-8")
 
 project = upstream / "ThreeOneOSSix.xcodeproj/project.pbxproj"
 pbx = project.read_text(encoding="utf-8")
