@@ -51,6 +51,12 @@ private enum GH6Error: LocalizedError {
     }
 }
 
+private struct GH6RecoveryEntry: Identifiable {
+    let id: String
+    let name: String
+    let receipt: PatchTransactionReceipt
+}
+
 private enum GH6PlanStorage {
     static func url(for id: String) throws -> URL {
         guard id.count == 32, id.allSatisfy({ $0.isHexDigit }) else {
@@ -82,6 +88,26 @@ private enum GH6PlanStorage {
               let projectID = UUID(uuidString: plan.packageId) else { return nil }
         return DevicePatchService.latestReceipt(projectID: projectID)
     }
+
+    static func recoverable() -> [GH6RecoveryEntry] {
+        guard let example = try? url(for: "00000000000000000000000000000000"),
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: example.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+              ) else { return [] }
+        return files.compactMap { file -> GH6RecoveryEntry? in
+            guard file.pathExtension == "json",
+                  let plan = read(file.deletingPathExtension().lastPathComponent),
+                  let receipt = activeReceipt(for: file.deletingPathExtension().lastPathComponent) else {
+                return nil
+            }
+            return GH6RecoveryEntry(
+                id: file.deletingPathExtension().lastPathComponent,
+                name: plan.name,
+                receipt: receipt
+            )
+        }
+    }
 }
 
 struct GooHan3106RemoteView: View {
@@ -107,6 +133,11 @@ struct GooHan3106RemoteView: View {
                 ? $0.feature < $1.feature
                 : $0.sortOrder < $1.sortOrder
         }
+    }
+
+    private var recoverable: [GH6RecoveryEntry] {
+        _ = refreshReceipt
+        return GH6PlanStorage.recoverable()
     }
 
     private var filteredCategories: [GH6Category] {
@@ -228,6 +259,24 @@ struct GooHan3106RemoteView: View {
                         }
                     }
 
+                    if !recoverable.isEmpty {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Label("Khôi phục tệp đã áp dụng", systemImage: "arrow.uturn.backward.circle")
+                                .font(.headline)
+                            Text("Có thể khôi phục ngay cả khi License hết hạn hoặc gói bị gỡ khỏi Admin.")
+                                .font(.caption).foregroundColor(.secondary)
+                            ForEach(recoverable) { entry in
+                                Button("Khôi phục \(entry.name)") {
+                                    Task { await restore(entry) }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(busyPackageID != nil)
+                            }
+                        }
+                        .padding(14)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    }
+
                     Text(statusText)
                         .font(.footnote)
                         .textSelection(.enabled)
@@ -335,6 +384,26 @@ struct GooHan3106RemoteView: View {
             bundleIdentifiers: [target],
             rules: rules
         )
+    }
+
+    private func restore(_ entry: GH6RecoveryEntry) async {
+        guard busyPackageID == nil else { return }
+        busyPackageID = entry.id
+        defer {
+            busyPackageID = nil
+            refreshReceipt += 1
+        }
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try DevicePatchService.restore(receipt: entry.receipt)
+            }.value
+            guard GH6PlanStorage.activeReceipt(for: entry.id) == nil else {
+                throw GH6Error.text("Biên nhận khôi phục chưa đóng")
+            }
+            statusText = "Đã khôi phục \(entry.name) bằng engine 3106."
+        } catch {
+            statusText = "Khôi phục thất bại: \(error.localizedDescription)"
+        }
     }
 
     private func toggle(_ patch: GH6Package, on: Bool) async {
