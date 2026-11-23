@@ -372,24 +372,29 @@ jobs:
             gohan/ThreeOneOSFive/helpers/LicenseManager.swift \
             upstream3106/LICENSE upstream3106/NOTICE.md
           cat > gohan3106-dist/READ_ME_FIRST.txt <<'EOF'
-          GOOHAN PATCH - FULL 3106 NATIVE ENGINE (EXPERIMENTAL)
+          GOOHAN PATCH - OFFICIAL 3106 RELEASE CANDIDATE (UNSIGNED)
           Original backend: QuinnTang74/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978.
-          Full native worse_query, SandboxAccess, DevicePatchService and
-          PatchTransaction remain from upstream; no substitute sandbox driver.
-          GooHan's server-side LicenseManager and remote Patch Library are
-          compiled into the same native 3106 app.
-          On 3106's home screen open 'GooHan Patch - Dong bo tu Admin'.
-          This is NOT yet the merged 3105/3106 hybrid. GooHan's old IPA
-          remains separately installable.
-          Bundle ID: com.qingtang.3106 (so it replaces any separately
-          installed original 3106 app, NOT the existing GooHan Patch app).
-          SIGNING: use a valid explicit App ID / provisioning profile with
-          an App Groups entitlement. Unsigned IPA cannot carry a valid grant.
-          Applying remote patches is not guaranteed: iOS permissions, the
-          actual signed entitlements and device compatibility must permit it.
-          Never claim an Apply succeeded without the native write receipt.
-          License/remote client storage is separate from the old GooHan app.
-          This experimental source is GPL-3.0 with upstream attribution.
+          Unmodified native worse_query, SandboxAccess, DevicePatchService,
+          PatchTransaction plus upstream kernel/bad_query support.
+          GooHan License and Admin ZCloudViet library are the MAIN UI, not a
+          dismissible overlay. The UI has 24 theme colors and format choice:
+          AUTO (.3106 on iOS 26.7+/27.x, otherwise .3105), 3105, or 3106.
+          Backup/Restore uses the full native 3106 transaction engine; local
+          recovery remains available even if a key expires or Admin removes a
+          patch from the catalog.
+          Existing tested iOS 27 IPA is preserved in the separate branch
+          gohan-hybrid-ios27-test. Do NOT delete it.
+          Bundle ID: com.qingtang.3106. This may replace a separately installed
+          3106 app, and the signing ID/team affects where backup journals live.
+          Before switching Bundle IDs or signing identities, restore active
+          patches using the existing working app.
+          Signing: use a valid explicit App ID / provisioning profile with
+          an App Groups entitlement for worse_query on iOS 27.
+          This release candidate has NOT been verified on all supported iOS
+          versions. Do not call Apply successful unless an actual native write
+          receipt is recorded, and test Restore before wider distribution.
+          This source is GPL-3.0 with upstream attribution; see source ZIP,
+          LICENSE and NOTICE.md.
           EOF
 
       - name: Upload GooHan full-native-3106 integrated IPA
