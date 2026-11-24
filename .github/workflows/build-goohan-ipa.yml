@@ -295,7 +295,9 @@ jobs:
           grep -q 'GooHan3106RemoteView()' upstream3106/ThreeOneOSSix/App.swift
           ! grep -q '                ContentView()' upstream3106/ThreeOneOSSix/App.swift
           grep -q 'GH6Palette.all' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
-          grep -q 'gohan.hybrid.package-format' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
+          # Hight is a fixed catalog edition; the old format preference was removed.
+          grep -Fq 'private var effectiveFormat: String { "3106" }' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
+          grep -Fq 'Text("Đang chọn Hight")' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
           grep -q 'DevicePatchService.apply(project: project)' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
           grep -q 'DevicePatchService.restore(receipt:' upstream3106/ThreeOneOSSix/GooHan3106Remote.swift
           # Do not silently alter the native 3106 engine files known to work.
