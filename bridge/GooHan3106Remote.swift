@@ -432,7 +432,6 @@ struct GooHan3106RemoteView: View {
             }
         }
     }
-    
     private var recoveryCard: some View {
         panel {
             VStack(alignment: .leading, spacing: 9) {
@@ -454,7 +453,6 @@ struct GooHan3106RemoteView: View {
             }
         }
     }
-
     private func panel<Content: View>(
         @ViewBuilder _ content: () -> Content
     ) -> some View {
