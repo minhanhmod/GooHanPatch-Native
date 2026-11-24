@@ -361,7 +361,7 @@ struct GooHan3106RemoteView: View {
                         .font(.caption.weight(.semibold))
                     }
                     .disabled(appState.kernelExploitRunning)
-                    Text("Chỉ dành cho phiên bản hỗ trợ. Thao tác kernel có rủi ro treo hoặc khởi động lại thiết bị; chỉ thực hiện khi bạn chủ động chọn.")
+                    Text("")
                         .font(.caption2)
                         .foregroundColor(.orange)
                 }
