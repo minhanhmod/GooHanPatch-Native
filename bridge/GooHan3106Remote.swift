@@ -118,21 +118,14 @@ struct GooHan3106RemoteView: View {
     @State private var categories: [GH6Category] = []
     @State private var selectedCategory = "free_fire_max"
     @AppStorage("GooHanThemeHex") private var themeHex = "#F479B7"
-    @AppStorage("gohan.hybrid.package-format") private var packagePreference = "auto"
     @State private var showSettings = false
     @State private var busyPackageID: String?
     @State private var syncing = false
     @State private var statusText = "Đang kết nối GooHan Admin…"
     @State private var refreshReceipt = 0
     private var accent: Color { Color(gh6Hex: themeHex) }
-    private var effectiveFormat: String {
-        let os = AppInfo.versionTuple
-        if packagePreference == "3105" { return "3105" }
-        if packagePreference == "3106" { return "3106" }
-        // Upstream 3106 already selects its native kernel/bad_query/worse_query
-        // backend by iOS version. This preference only chooses the Admin format.
-        return os.major >= 27 || (os.major == 26 && os.minor >= 7) ? "3106" : "3105"
-    }
+    // Fixed catalog edition. Does not grant access or change engine support.
+    private var effectiveFormat: String { "3106" }
 
     private var visiblePackages: [GH6Package] {
         packages.filter { patch in
@@ -482,13 +475,7 @@ struct GooHan3106RemoteView: View {
                     }
                     VStack(alignment: .leading, spacing: 9) {
                         Text("Model Panel").font(.headline)
-                        Picker("Model Panel", selection: $packagePreference) {
-                            Text("Auto").tag("auto")
-                            Text("Low").tag("3105")
-                            Text("Hight").tag("3106")
-                        }
-                        .pickerStyle(.segmented)
-                        Text("Đang chọn \(effectiveFormat == "3105" ? "Low" : effectiveFormat == "3106" ? "Hight" : "Auto")")
+                        Text("Đang chọn Hight")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
