@@ -322,7 +322,6 @@ struct ContentView: View {
     // This URL is public configuration, NOT a password or secret.
     private let serverURL = "https://gohanpatch-adminpatch.zcloudviet.xyz"
     @AppStorage("GooHanThemeHex") private var themeHex = "#FF4757"
-    @AppStorage(GooHanPackagePreference.storageKey) private var packagePreference = "auto"
     @State private var game = "free_fire"
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
     @State private var categories: [GooCategory] = GooCache.loadCategories()
@@ -357,14 +356,8 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var color: Color { Color(gooHex: themeHex) }
-    // UI package format selection only; it must never be interpreted as a
-    // successful sandbox grant or a working .3106 patch backend.
-    private var selectedPackageFormat: String {
-        let os = AppInfo.versionTuple
-        return GooHanPackagePreference.effectiveFormat(
-            rawValue: packagePreference, major: os.major, minor: os.minor
-        )
-    }
+    // Fixed catalog edition. Does not grant access or change engine support.
+    private var selectedPackageFormat: String { "3105" }
     private var availableCategories: [GooCategory] {
         // Keep a category visible while its active patches still need restoration.
         let activeIDs = Set(catalog.filter { GooCache.hasReceipt(for: $0) }
@@ -616,36 +609,9 @@ struct ContentView: View {
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Chế độ gói Patch").font(.headline)
-                        Picker("Chế độ gói Patch", selection: $packagePreference) {
-                            Text("Tự động").tag("auto")
-                            Text("3105").tag("3105")
-                            Text("3106").tag("3106")
-                        }
-                        .pickerStyle(.segmented)
-                        Text("Đang chọn .\(selectedPackageFormat). Tự động ưu tiên .3106 trên iOS 26.7+/27.x; các phiên bản trước ưu tiên .3105.")
+                        Text("Model Panel").font(.headline)
+                        Text("Đang chọn Low")
                             .font(.footnote).foregroundColor(.secondary)
-                        if selectedPackageFormat == "3106" {
-                            Text("Chế độ .3106 hỗ trợ đồng bộ và kiểm tra kế hoạch từ Admin (không ghi tệp). Chưa tích hợp backend Apply/Restore trên iOS 27 nên công tắc vẫn khóa.")
-                                .font(.footnote).foregroundColor(.orange)
-                        } else {
-                            Text("Chọn .3105 không vượt qua giới hạn quyền của iOS. Chỉ thiết bị có backend hoạt động mới áp dụng Patch.")
-                                .font(.footnote).foregroundColor(.secondary)
-                        }
-                        if selectedPackageFormat == "3106" {
-                            Button {
-                                message = GooHanSigningPreflight.report()
-                                showSettings = false
-                            } label: {
-                                Label("Chẩn đoán App Groups và backend iOS 27",
-                                      systemImage: "checkmark.shield")
-                            }
-                            .buttonStyle(.bordered).tint(color)
-                            Text("Kiểm tra quyền ký IPA sau khi cài; không truy cập hoặc ghi dữ liệu game.")
-                                .font(.caption).foregroundColor(.secondary)
-                        }
-                        Text("Các gói đang bật vẫn hiển thị để có thể khôi phục dù bạn đổi chế độ.")
-                            .font(.caption).foregroundColor(.secondary)
                     }
                     if let link = URL(string: supportUrl), link.scheme == "https" {
                         Link("Hỗ trợ", destination: link)
