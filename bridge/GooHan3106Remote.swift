@@ -51,13 +51,13 @@ private enum GH6Error: LocalizedError {
     }
 }
 
-struct GH6RecoveryEntry: Identifiable {
+private struct GH6RecoveryEntry: Identifiable {
     let id: String
     let name: String
     let receipt: PatchTransactionReceipt
 }
 
-enum GH6PlanStorage {
+private enum GH6PlanStorage {
     static func url(for id: String) throws -> URL {
         guard id.count == 32, id.allSatisfy({ $0.isHexDigit }) else {
             throw GH6Error.text("Mã gói không hợp lệ")
