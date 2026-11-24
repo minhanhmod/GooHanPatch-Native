@@ -359,6 +359,7 @@ struct GooHan3106RemoteView: View {
                             systemImage: "lock.open.fill"
                         )
                         .font(.caption.weight(.semibold))
+                }
             }
         }
     }
