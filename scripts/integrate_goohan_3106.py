@@ -141,13 +141,27 @@ if pbx.count(old_name) != 2:
 pbx = pbx.replace(
     old_name, 'INFOPLIST_KEY_CFBundleDisplayName = "GooHan Patch";'
 )
+# Rename the Xcode product and bundle identifier; leave the target/scheme
+# and native source files unchanged.
+for old, new, count in (
+    ("PRODUCT_NAME = 3106;", "PRODUCT_NAME = GoHaniOS;", 2),
+    ("PRODUCT_BUNDLE_IDENTIFIER = com.qingtang.3106;", "PRODUCT_BUNDLE_IDENTIFIER = com.gohan.ios;", 2),
+    ("3106.app", "GoHaniOS.app", 3),
+    ("productName = 3106;", "productName = GoHaniOS;", 1),
+):
+    if pbx.count(old) != count:
+        raise RuntimeError(f"Unexpected product metadata: {old}")
+    pbx = pbx.replace(old, new)
 project.write_text(pbx, encoding="utf-8")
 
 info_path = app_root / "Info.plist"
 with info_path.open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.qingtang.3106"
+info["CFBundleIdentifier"] = "com.gohan.ios"
+info["CFBundleName"] = "GoHaniOS"
 info["CFBundleDisplayName"] = "GooHan Patch"
+assert info["CFBundleExecutable"] == "$(EXECUTABLE_NAME)"
 with info_path.open("wb") as handle:
     plistlib.dump(info, handle, sort_keys=False)
 

@@ -352,15 +352,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP="$GITHUB_WORKSPACE/gohan-native3106-build/Build/Products/Release-iphoneos/3106.app"
-          test -d "$APP" && test -f "$APP/3106"
+          APP="$GITHUB_WORKSPACE/gohan-native3106-build/Build/Products/Release-iphoneos/GoHaniOS.app"
+          test -d "$APP" && test -f "$APP/GoHaniOS"
           mkdir -p "$GITHUB_WORKSPACE/gohan3106-dist/Payload"
-          ditto "$APP" "$GITHUB_WORKSPACE/gohan3106-dist/Payload/3106.app"
+          ditto "$APP" "$GITHUB_WORKSPACE/gohan3106-dist/Payload/GoHaniOS.app"
           cd "$GITHUB_WORKSPACE/gohan3106-dist"
           /usr/bin/zip -q -r -y GooHan-Patch-full-3106-native-unsigned.ipa Payload
           /usr/bin/unzip -t GooHan-Patch-full-3106-native-unsigned.ipa | tail -n 2
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/3106.app/Info.plist)" = "com.qingtang.3106"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' Payload/3106.app/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/GoHaniOS.app/Info.plist)" = "com.gohan.ios"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' Payload/GoHaniOS.app/Info.plist)" = "GoHaniOS"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' Payload/GoHaniOS.app/Info.plist
           shasum -a 256 GooHan-Patch-full-3106-native-unsigned.ipa > GooHan-Patch-full-3106-native-unsigned.ipa.sha256
           cp "$GITHUB_WORKSPACE/upstream3106/LICENSE" .
           cp "$GITHUB_WORKSPACE/upstream3106/NOTICE.md" .
@@ -386,8 +387,8 @@ jobs:
           patch from the catalog.
           Existing tested iOS 27 IPA is preserved in the separate branch
           gohan-hybrid-ios27-test. Do NOT delete it.
-          Bundle ID: com.qingtang.3106. This may replace a separately installed
-          3106 app, and the signing ID/team affects where backup journals live.
+          Bundle ID: com.gohan.ios. Changing the bundle identifier or signing
+          identity can create a different application data container.
           Before switching Bundle IDs or signing identities, restore active
           patches using the existing working app.
           Signing: use a valid explicit App ID / provisioning profile with
