@@ -234,7 +234,10 @@ struct ContentView: View {
             .sorted { $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder }
     }
     private var visible: [GooPatch] {
-        catalog.filter { ($0.categoryId ?? $0.game) == game && ($0.enabled || GooCache.hasReceipt(for: $0)) }
+        catalog.filter {
+            ($0.categoryId ?? $0.game) == game &&
+            (($0.packageFormat.lowercased() == "3105" && $0.enabled) || GooCache.hasReceipt(for: $0))
+        }
             .sorted { $0.sortOrder == $1.sortOrder ? $0.feature < $1.feature : $0.sortOrder < $1.sortOrder }
     }
     var body: some View {
