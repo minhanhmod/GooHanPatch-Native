@@ -430,7 +430,7 @@ struct ContentView: View {
                         Link("Hỗ trợ", destination: link)
                             .font(.subheadline).foregroundColor(color)
                     }
-                    Text("Bản này chỉ có thể thao tác với dữ liệu khi iOS thực sự cấp quyền. Không có thao tác chọn thư mục; nếu không đủ quyền, công tắc sẽ giữ trạng thái OFF và hiển thị lỗi.")
+                    Text("")
                         .font(.footnote).foregroundColor(.secondary)
                     if let expiry = licenseManager.expirationDate {
                         Text("License có hiệu lực đến: \(expiry.formatted(date: .abbreviated, time: .shortened))")
