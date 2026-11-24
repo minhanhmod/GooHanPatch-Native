@@ -51,13 +51,13 @@ private enum GH6Error: LocalizedError {
     }
 }
 
-private struct GH6RecoveryEntry: Identifiable {
+struct GH6RecoveryEntry: Identifiable {
     let id: String
     let name: String
     let receipt: PatchTransactionReceipt
 }
 
-private enum GH6PlanStorage {
+enum GH6PlanStorage {
     static func url(for id: String) throws -> URL {
         guard id.count == 32, id.allSatisfy({ $0.isHexDigit }) else {
             throw GH6Error.text("Mã gói không hợp lệ")
@@ -165,8 +165,10 @@ struct GooHan3106RemoteView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView(showsIndicators: false) {
+        Group {
+            if licenseManager.isActive {
+                NavigationStack {
+                    ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     hero
                     categoryPicker
@@ -237,6 +239,12 @@ struct GooHan3106RemoteView: View {
                     }
                     .accessibilityLabel("Cài đặt GooHan")
                 }
+            }
+                }
+            } else {
+                // Original GooHan License screen (including theme picker,
+                // Admin branding, and unlicensed backup recovery).
+                LicenseActivationView(manager: licenseManager)
             }
         }
         .preferredColorScheme(.dark)
@@ -726,7 +734,7 @@ struct GooHan3106RemoteView: View {
 }
 
 
-private enum GH6Palette {
+enum GH6Palette {
     static let all: [(String, String)] = [
         ("Đỏ", "#FF4757"), ("Đỏ đậm", "#CD354C"), ("Cam", "#F97342"), ("Hổ phách", "#EFA53E"),
         ("Vàng", "#FFD45B"), ("Chanh", "#C8DB57"), ("Lục", "#69D688"), ("Ngọc", "#2CC999"),
@@ -767,5 +775,78 @@ private struct GH6GridBackground: View {
             }
         }
         .ignoresSafeArea()
+    }
+}
+
+
+// The original GooHan activation screen's recovery card, backed by the
+// already-proven 3106 DevicePatchService instead of the older 3105 cache.
+struct GooHan3106RestorePanel: View {
+    @AppStorage("GooHanThemeHex") private var themeHex = "#FF4757"
+    @State private var entries: [GH6RecoveryEntry] = []
+    @State private var pendingID: String?
+    @State private var resultText: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Label("Khôi phục tệp gốc", systemImage: "arrow.uturn.backward.circle.fill")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.white)
+            Text("Ngay cả khi Key đã hết hạn, bạn vẫn có thể khôi phục những gói đã bật trên thiết bị này.")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.65))
+            if entries.isEmpty {
+                Text("Không có bản Patch nào cần khôi phục.")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.46))
+            } else {
+                ForEach(entries) { item in
+                    Button {
+                        Task { await restore(item) }
+                    } label: {
+                        Label("Khôi phục \(item.name)", systemImage: "arrow.uturn.backward")
+                    }
+                    .disabled(pendingID != nil)
+                    .font(.subheadline.weight(.semibold))
+                }
+            }
+            if let resultText {
+                Text(resultText)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.85))
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(18)
+        .background(
+            Color(red: 0.12, green: 0.14, blue: 0.22).opacity(0.92),
+            in: RoundedRectangle(cornerRadius: 20)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color(gh6Hex: themeHex).opacity(0.13), lineWidth: 1)
+        )
+        .onAppear { entries = GH6PlanStorage.recoverable() }
+    }
+
+    private func restore(_ entry: GH6RecoveryEntry) async {
+        guard pendingID == nil else { return }
+        pendingID = entry.id
+        defer {
+            pendingID = nil
+            entries = GH6PlanStorage.recoverable()
+        }
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try DevicePatchService.restore(receipt: entry.receipt)
+            }.value
+            guard GH6PlanStorage.activeReceipt(for: entry.id) == nil else {
+                resultText = "Khôi phục chưa hoàn tất: \(entry.name)"
+                return
+            }
+            resultText = "Đã khôi phục \(entry.name)."
+        } catch {
+            resultText = "Khôi phục thất bại: \(error.localizedDescription)"
+        }
     }
 }
