@@ -516,8 +516,9 @@ struct GooHan3106RemoteView: View {
                         }
                         .pickerStyle(.segmented)
                         Text("Đang chọn \(effectiveFormat == "3105" ? "Low" : effectiveFormat == "3106" ? "Hight" : "Auto")")
-    .font(.footnote)
-    .foregroundColor(.secondary)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
                     if let expires = licenseManager.expirationDate {
                         Text("License có hiệu lực đến: \(expires.formatted(date: .abbreviated, time: .shortened))")
                             .font(.footnote)
