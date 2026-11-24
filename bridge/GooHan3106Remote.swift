@@ -359,12 +359,6 @@ struct GooHan3106RemoteView: View {
                             systemImage: "lock.open.fill"
                         )
                         .font(.caption.weight(.semibold))
-                    }
-                    .disabled(appState.kernelExploitRunning)
-                    Text("")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
-                }
             }
         }
     }
