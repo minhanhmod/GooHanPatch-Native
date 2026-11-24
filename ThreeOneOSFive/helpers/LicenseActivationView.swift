@@ -235,6 +235,7 @@ struct LicenseActivationView: View {
             var request = URLRequest(url: LicenseManager.serverURL.appendingPathComponent("api/config"))
             request.timeoutInterval = 15
             request.cachePolicy = .reloadIgnoringLocalCacheData
+            LicenseManager.identify(&request)
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
             let decoder = JSONDecoder()
