@@ -4,7 +4,7 @@
 Only these changes are made to upstream:
 - add GooHan's original server-side LicenseManager
 - add the GooHan authenticated patch library view
-- show a GooHan entry on 3106's home tab
+- show original GooHan License activation UI and Admin patch library
 - register the two new Swift files with Xcode
 - change the visible app name
 Do not replace worse_query/SandboxAccess/DevicePatchService/transaction files.
@@ -38,6 +38,14 @@ shutil.copy2(
     goohan / "ThreeOneOSFive/helpers/LicenseManager.swift",
     app_root / "GooHanLicenseManager.swift",
 )
+# Restore the original GooHan license activation screen from the stable app.
+# Only redirect its palette and Restore card to the full 3106 backend.
+activation_source = (goohan / "ThreeOneOSFive/helpers/LicenseActivationView.swift").read_text(encoding="utf-8")
+assert activation_source.count("GooPalette.all") == 2
+assert activation_source.count("GooHanRecoveryPanel()") == 1
+activation_source = activation_source.replace("GooPalette.all", "GH6Palette.all")
+activation_source = activation_source.replace("GooHanRecoveryPanel()", "GooHan3106RestorePanel()")
+(app_root / "GooHanActivationView.swift").write_text(activation_source, encoding="utf-8")
 
 def replace_once(text: str, old: str, new: str) -> str:
     n = text.count(old)
@@ -74,7 +82,9 @@ build1 = "ABCD1234ABCD1234ABCD0101"
 ref1 = "ABCD1234ABCD1234ABCD0102"
 build2 = "ABCD1234ABCD1234ABCD0103"
 ref2 = "ABCD1234ABCD1234ABCD0104"
-for item in (build1, ref1, build2, ref2):
+build3 = "ABCD1234ABCD1234ABCD0105"
+ref3 = "ABCD1234ABCD1234ABCD0106"
+for item in (build1, ref1, build2, ref2, build3, ref3):
     if item in pbx:
         raise RuntimeError("Unexpected duplicate PBX ID")
 
@@ -85,7 +95,9 @@ pbx = replace_once(
     f"\t\t{build1} /* GooHan3106Remote.swift in Sources */ = "
     f"{{isa = PBXBuildFile; fileRef = {ref1}; }};\n"
     f"\t\t{build2} /* GooHanLicenseManager.swift in Sources */ = "
-    f"{{isa = PBXBuildFile; fileRef = {ref2}; }};\n",
+    f"{{isa = PBXBuildFile; fileRef = {ref2}; }};\n"
+    f"\t\t{build3} /* GooHanActivationView.swift in Sources */ = "
+    f"{{isa = PBXBuildFile; fileRef = {ref3}; }};\n",
 )
 pbx = replace_once(
     pbx,
@@ -96,14 +108,18 @@ pbx = replace_once(
     'path = GooHan3106Remote.swift; sourceTree = "<group>"; };\n'
     f'\t\t{ref2} /* GooHanLicenseManager.swift */ = '
     '{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; '
-    'path = GooHanLicenseManager.swift; sourceTree = "<group>"; };\n',
+    'path = GooHanLicenseManager.swift; sourceTree = "<group>"; };\n'
+    f'\t\t{ref3} /* GooHanActivationView.swift */ = '
+    '{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; '
+    'path = GooHanActivationView.swift; sourceTree = "<group>"; };\n',
 )
 pbx = replace_once(
     pbx,
     "\t\t\t\t3105A021 /* ContentView.swift */,\n",
     "\t\t\t\t3105A021 /* ContentView.swift */,\n"
     f"\t\t\t\t{ref1} /* GooHan3106Remote.swift */,\n"
-    f"\t\t\t\t{ref2} /* GooHanLicenseManager.swift */,\n",
+    f"\t\t\t\t{ref2} /* GooHanLicenseManager.swift */,\n"
+    f"\t\t\t\t{ref3} /* GooHanActivationView.swift */,\n",
 )
 pbx = replace_once(
     pbx,
@@ -116,7 +132,8 @@ pbx = replace_once(
     "\t\t\tbuildActionMask = 2147483647;\n"
     "\t\t\tfiles = (\n"
     f"\t\t\t\t{build1} /* GooHan3106Remote.swift in Sources */,\n"
-    f"\t\t\t\t{build2} /* GooHanLicenseManager.swift in Sources */,\n",
+    f"\t\t\t\t{build2} /* GooHanLicenseManager.swift in Sources */,\n"
+    f"\t\t\t\t{build3} /* GooHanActivationView.swift in Sources */,\n",
 )
 old_name = "INFOPLIST_KEY_CFBundleDisplayName = 3106;"
 if pbx.count(old_name) != 2:
