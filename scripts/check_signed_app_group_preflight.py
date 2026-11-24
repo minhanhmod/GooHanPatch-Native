@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure signed-App-Group iOS27 diagnostic remains read-only and present in UI."""
+"""Ensure the signed-App-Group diagnostic remains read-only and the Low catalog stays fixed."""
 from pathlib import Path
 
 source = Path("ThreeOneOSFive/ContentView.swift").read_text(encoding="utf-8")
@@ -23,5 +23,9 @@ for banned in (
     "worse_query_grant(",
 ):
     assert banned not in body, f"Diagnostic must remain read-only: {banned}"
-assert 'Label("Chẩn đoán App Groups và backend iOS 27"' in source
+# The Low edition has a fixed 3105 catalog; no 3106 UI picker remains.
+# Keep all read-only diagnostic checks above, and verify the new UI contract.
+assert 'private var selectedPackageFormat: String { "3105" }' in source
+assert 'Text("Đang chọn Low")' in source
+assert '$packagePreference' not in source
 print("GOOHAN_SIGNED_APP_GROUP_PREFLIGHT_STATIC_PASS")
