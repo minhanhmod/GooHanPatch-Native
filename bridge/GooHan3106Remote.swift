@@ -120,19 +120,11 @@ struct GooHan3106RemoteView: View {
     @AppStorage("GooHanThemeHex") private var themeHex = "#F479B7"
     @AppStorage("gohan.hybrid.package-format") private var packagePreference = "auto"
     @State private var showSettings = false
-    @State private var showLegacyUnlockConfirmation = false
     @State private var busyPackageID: String?
     @State private var syncing = false
     @State private var statusText = "Đang kết nối GooHan Admin…"
     @State private var refreshReceipt = 0
     private var accent: Color { Color(gh6Hex: themeHex) }
-    private var modelDisplayName: String {
-        switch packagePreference {
-        case "3105": return "Low"
-        case "3106": return "Hight"
-        default: return "Auto"
-        }
-    }
     private var effectiveFormat: String {
         let os = AppInfo.versionTuple
         if packagePreference == "3105" { return "3105" }
@@ -208,6 +200,8 @@ struct GooHan3106RemoteView: View {
                         licenseCard
                     }
 
+                    if !recoverable.isEmpty { recoveryCard }
+
                     panel {
                         HStack(alignment: .top, spacing: 11) {
                             Image(systemName: "info.circle.fill").foregroundColor(accent)
@@ -219,8 +213,8 @@ struct GooHan3106RemoteView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Text("Telegram: @gohanios")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(accent)
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.43))
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 14)
                 }
@@ -255,9 +249,14 @@ struct GooHan3106RemoteView: View {
     }
 
     private var hero: some View {
-        panel(animated: true) {
-            VStack(alignment: .leading, spacing: 13) {
-                HStack {
+        panel {
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(spacing: 9) {
+                    Circle().fill(accent).frame(width: 9, height: 9)
+                    Text("GÔHÀNIOS • IPA")
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundColor(accent)
                     Spacer()
                     Image(systemName: "shield.lefthalf.filled")
                         .foregroundColor(accent)
@@ -265,9 +264,12 @@ struct GooHan3106RemoteView: View {
                 Text("GôHan iOS")
                     .font(.system(size: 34, weight: .black, design: .rounded))
                     .foregroundColor(.white)
-                Text("Aim • Chams • Mod Skin")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.white.opacity(0.70))
+                Text("GôHan iOS iPA - Aim - Chams - Mod Skin")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.62))
+                Text("AIM • CHAMS • MOD")
+                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                    .foregroundColor(accent)
             }
         }
     }
@@ -291,9 +293,7 @@ struct GooHan3106RemoteView: View {
 
     private func categoryButton(_ id: String, title: String) -> some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                selectedCategory = id
-            }
+            selectedCategory = id
         } label: {
             Text(title)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -301,9 +301,8 @@ struct GooHan3106RemoteView: View {
                 .foregroundColor(.white)
                 .padding(.horizontal, 17)
                 .padding(.vertical, 14)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
                 .background(
-                    selectedCategory == id ? accent.opacity(0.22) : Color.black.opacity(0.12),
+                    selectedCategory == id ? accent.opacity(0.24) : Color.white.opacity(0.08),
                     in: RoundedRectangle(cornerRadius: 14)
                 )
                 .overlay(
@@ -315,7 +314,7 @@ struct GooHan3106RemoteView: View {
     }
 
     private var syncCard: some View {
-        panel(animated: true) {
+        panel {
             VStack(alignment: .leading, spacing: 11) {
                 HStack {
                     Image(systemName: "cloud.fill")
@@ -338,7 +337,35 @@ struct GooHan3106RemoteView: View {
                 }
                 Text("Các chức năng được cập nhật từ phía Admin.")
                     .font(.footnote)
-                    .foregroundColor(.white.opacity(0.65))
+                    .foregroundColor(.white.opacity(0.62))
+                Text("Định dạng đang chọn: .\(effectiveFormat)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(accent)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.shield")
+                    Text("Đồng bộ & quản lý chức năng")
+                }
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.55))
+
+                if SandboxAccess.backend == .kernel && appState.needsUnlock {
+                    Button {
+                        // Upstream 3106 requires explicit user consent before
+                        // starting the legacy kernel chain; never run at launch.
+                        appState.runKernelExploitIfNeeded()
+                    } label: {
+                        Label(
+                            appState.kernelExploitRunning ? "Đang kích hoạt quyền truy cập…" :
+                                "Kích hoạt quyền truy cập iOS 17/18",
+                            systemImage: "lock.open.fill"
+                        )
+                        .font(.caption.weight(.semibold))
+                    }
+                    .disabled(appState.kernelExploitRunning)
+                    Text("Chỉ dành cho phiên bản hỗ trợ. Thao tác kernel có rủi ro treo hoặc khởi động lại thiết bị; chỉ thực hiện khi bạn chủ động chọn.")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
             }
         }
     }
@@ -418,49 +445,41 @@ struct GooHan3106RemoteView: View {
         }
     }
 
-    private func panel<Content: View>(
-        animated: Bool = false,
-        @ViewBuilder _ content: () -> Content
-    ) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        return content()
-            .padding(17)
-            .background {
-                ZStack {
-                    shape.fill(.ultraThinMaterial)
-                    shape.fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.13, green: 0.14, blue: 0.19).opacity(0.90),
-                                Color(red: 0.07, green: 0.08, blue: 0.12).opacity(0.86),
-                                accent.opacity(0.09)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    if animated {
-                        GH6LiquidGlassShine(accent: accent)
-                            .clipShape(shape)
+    private var recoveryCard: some View {
+        panel {
+            VStack(alignment: .leading, spacing: 9) {
+                Label("KHÔI PHỤC CÁC GÓI ĐANG BẬT", systemImage: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(accent)
+                Text("Luôn cho phép khôi phục kể cả khi đổi chế độ, License hết hạn hoặc Admin gỡ gói.")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.62))
+                ForEach(recoverable) { entry in
+                    Button {
+                        Task { await restore(entry) }
+                    } label: {
+                        Label("Khôi phục \(entry.name)", systemImage: "arrow.uturn.backward")
+                            .font(.subheadline.weight(.semibold))
                     }
+                    .disabled(busyPackageID != nil || syncing)
                 }
             }
-            .overlay {
-                shape.stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.30),
-                            accent.opacity(0.20),
-                            Color.white.opacity(0.07)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-            }
-            .shadow(color: accent.opacity(animated ? 0.16 : 0.08),
-                    radius: animated ? 20 : 11, x: 0, y: 8)
+        }
+    }
+
+    private func panel<Content: View>(
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        content()
+            .padding(17)
+            .background(
+                Color(red: 0.093, green: 0.103, blue: 0.13).opacity(0.97),
+                in: RoundedRectangle(cornerRadius: 21)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 21)
+                    .stroke(.white.opacity(0.095), lineWidth: 1)
+            )
     }
 
     private var settingsPanel: some View {
@@ -475,7 +494,7 @@ struct GooHan3106RemoteView: View {
                     ) {
                         ForEach(0..<GH6Palette.all.count, id: \.self) { index in
                             let item = GH6Palette.all[index]
-                            Button { withAnimation(.easeInOut(duration: 0.24)) { themeHex = item.1 } } label: {
+                            Button { themeHex = item.1 } label: {
                                 Circle()
                                     .fill(Color(gh6Hex: item.1))
                                     .frame(width: 36, height: 36)
@@ -489,7 +508,6 @@ struct GooHan3106RemoteView: View {
                             .accessibilityLabel(item.0)
                         }
                     }
-
                     VStack(alignment: .leading, spacing: 9) {
                         Text("Model Panel").font(.headline)
                         Picker("Model Panel", selection: $packagePreference) {
@@ -498,43 +516,21 @@ struct GooHan3106RemoteView: View {
                             Text("Hight").tag("3106")
                         }
                         .pickerStyle(.segmented)
+                        Text("Đang chọn .\(effectiveFormat). Tự động dùng 3106 cho iOS 26.7+/27.x, và 3105 cho phiên bản trước.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                        Text("Đổi chế độ không thay đổi quyền truy cập; các gói đã bật luôn có thể khôi phục.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
                     }
-
+                    Text("Backend thực tế: \(SandboxAccess.backend.displayName)")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                     if let expires = licenseManager.expirationDate {
                         Text("License có hiệu lực đến: \(expires.formatted(date: .abbreviated, time: .shortened))")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
-
-                    if !recoverable.isEmpty {
-                        DisclosureGroup {
-                            VStack(alignment: .leading, spacing: 9) {
-                                ForEach(recoverable) { entry in
-                                    Button {
-                                        Task { await restore(entry) }
-                                    } label: {
-                                        Label("Khôi phục \(entry.name)", systemImage: "arrow.uturn.backward")
-                                            .font(.subheadline.weight(.semibold))
-                                    }
-                                    .disabled(busyPackageID != nil || syncing)
-                                }
-                            }
-                            .padding(.top, 8)
-                        } label: {
-                            Label("Khôi phục bản gốc", systemImage: "arrow.uturn.backward.circle.fill")
-                        }
-                        .tint(accent)
-                    }
-
-                    if SandboxAccess.backend == .kernel && appState.needsUnlock {
-                        Button {
-                            showLegacyUnlockConfirmation = true
-                        } label: {
-                            Label("Kích hoạt quyền truy cập", systemImage: "lock.open.fill")
-                        }
-                        .disabled(appState.kernelExploitRunning)
-                    }
-
                     Button("Đồng bộ ngay") {
                         showSettings = false
                         Task { await sync() }
@@ -545,6 +541,9 @@ struct GooHan3106RemoteView: View {
                         showSettings = false
                     }
                     .foregroundColor(.orange)
+                    Text("GooHan iOS • Engine mã nguồn 3106 theo giấy phép GPL-3.0. Việc áp dụng tệp phụ thuộc vào backend, phiên bản iOS và quyền của ứng dụng.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
                 .padding(20)
             }
@@ -558,18 +557,6 @@ struct GooHan3106RemoteView: View {
         }
         .tint(accent)
         .preferredColorScheme(.dark)
-        .confirmationDialog(
-            "Xác nhận kích hoạt quyền truy cập",
-            isPresented: $showLegacyUnlockConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Tiếp tục kích hoạt", role: .destructive) {
-                appState.runKernelExploitIfNeeded()
-            }
-            Button("Hủy", role: .cancel) {}
-        } message: {
-            Text("Chỉ dành cho thiết bị iOS 17/18 tương thích. Quá trình kích hoạt quyền truy cập có thể khiến thiết bị treo hoặc khởi động lại.")
-        }
     }
 
     private func decoder() -> JSONDecoder {
@@ -667,7 +654,7 @@ struct GooHan3106RemoteView: View {
             guard GH6PlanStorage.activeReceipt(for: entry.id) == nil else {
                 throw GH6Error.text("Biên nhận khôi phục chưa đóng")
             }
-            statusText = "Đã khôi phục \(entry.name)."
+            statusText = "Đã khôi phục \(entry.name) bằng engine 3106."
         } catch {
             statusText = "Khôi phục thất bại: \(error.localizedDescription)"
         }
@@ -719,7 +706,7 @@ struct GooHan3106RemoteView: View {
                       receipt.projectID == project.id else {
                     throw GH6Error.text("Không có biên nhận xác nhận đã ghi")
                 }
-                statusText = "Đã áp dụng \(patch.feature) và lưu bản sao để khôi phục."
+                statusText = "Đã áp dụng \(patch.feature) bằng engine 3106 và lưu bản sao để khôi phục."
             } else {
                 guard let receipt = GH6PlanStorage.activeReceipt(for: patch.id) else {
                     throw GH6Error.text("Không tìm thấy biên nhận để khôi phục")
@@ -780,46 +767,5 @@ private struct GH6GridBackground: View {
             }
         }
         .ignoresSafeArea()
-    }
-}
-
-
-// Animated material highlight, deliberately limited to the hero and sync card.
-// Respect Reduce Motion and keep the native engine / transaction logic untouched.
-private struct GH6LiquidGlassShine: View {
-    let accent: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var moving = false
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                RadialGradient(
-                    colors: [accent.opacity(0.14), .clear],
-                    center: .topLeading,
-                    startRadius: 8,
-                    endRadius: 250
-                )
-
-                LinearGradient(
-                    colors: [.clear, .white.opacity(0.13), .white.opacity(0.04), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(width: max(proxy.size.width * 0.46, 80))
-                .rotationEffect(.degrees(18))
-                .blur(radius: 12)
-                .offset(x: reduceMotion ? 0 :
-                        (moving ? proxy.size.width * 1.2 : -proxy.size.width * 1.2))
-            }
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.linear(duration: 6.5).repeatForever(autoreverses: false)) {
-                    moving = true
-                }
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
