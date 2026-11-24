@@ -505,8 +505,6 @@ struct ContentView: View {
                     }
                 }
                 Text(GooPublicText.withoutBundleIdentifiers(notice)).font(.footnote).foregroundColor(.white.opacity(0.62))
-                Text("Định dạng đang chọn: .\(selectedPackageFormat)")
-                    .font(.caption.weight(.semibold)).foregroundColor(color)
                 if selectedPackageFormat == "3106" {
                     Text("Gói .3106 được kiểm tra tính toàn vẹn bằng SHA-256. Backend ghi/khôi phục trên iOS 27 chưa được tích hợp.")
                         .font(.caption).foregroundColor(.orange)
