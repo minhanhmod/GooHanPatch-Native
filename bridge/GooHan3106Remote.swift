@@ -515,16 +515,9 @@ struct GooHan3106RemoteView: View {
                             Text("Hight").tag("3106")
                         }
                         .pickerStyle(.segmented)
-                        Text("Đang chọn .\(effectiveFormat). Tự động dùng 3106 cho iOS 26.7+/27.x, và 3105 cho phiên bản trước.")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                        Text("Đổi chế độ không thay đổi quyền truy cập; các gói đã bật luôn có thể khôi phục.")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    Text("Backend thực tế: \(SandboxAccess.backend.displayName)")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
+                        Text("Đang chọn \(effectiveFormat == "3105" ? "Low" : effectiveFormat == "3106" ? "Hight" : "Auto")")
+    .font(.footnote)
+    .foregroundColor(.secondary)
                     if let expires = licenseManager.expirationDate {
                         Text("License có hiệu lực đến: \(expires.formatted(date: .abbreviated, time: .shortened))")
                             .font(.footnote)
@@ -540,7 +533,7 @@ struct GooHan3106RemoteView: View {
                         showSettings = false
                     }
                     .foregroundColor(.orange)
-                    Text("GooHan iOS • Engine mã nguồn 3106 theo giấy phép GPL-3.0. Việc áp dụng tệp phụ thuộc vào backend, phiên bản iOS và quyền của ứng dụng.")
+                    Text("GoHan iOS")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
