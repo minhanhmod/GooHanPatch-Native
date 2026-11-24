@@ -8,8 +8,8 @@ import Security
 final class LicenseManager: ObservableObject {
     static let serverURL = URL(string: "https://gohanpatch-adminpatch.zcloudviet.xyz")!
     // Only release identifier sent to Admin; not displayed in Settings.
-    private static let releaseID = "GOOHAN_OFFICIAL_5_12_4"
-    private static func identify(_ request: inout URLRequest) {
+    private static let releaseID = "GOOHAN_HIGHT_20261124"
+    static func identify(_ request: inout URLRequest) {
         request.setValue(releaseID, forHTTPHeaderField: "X-GooHan-Release")
     }
 
@@ -122,7 +122,7 @@ final class LicenseManager: ObservableObject {
            let result = try? JSONDecoder().decode(ServerError.self, from: data),
            result.error == "CLIENT_UPDATE_REQUIRED" {
             isActive = false
-            throw LicenseError.denied("Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
+            throw LicenseError.denied(result.message ?? "Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
         }
         if http.statusCode == 401 || http.statusCode == 403 {
             isActive = false
@@ -149,7 +149,7 @@ final class LicenseManager: ObservableObject {
         if let status = response as? HTTPURLResponse, status.statusCode == 403,
            let result = try? JSONDecoder().decode(ServerError.self, from: data),
            result.error == "CLIENT_UPDATE_REQUIRED" {
-            throw LicenseError.denied("Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
+            throw LicenseError.denied(result.message ?? "Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
         }
         guard let status = response as? HTTPURLResponse, status.statusCode == 200 else {
             throw LicenseError.denied("Key hết hạn, đã thu hồi, phiên hết hạn hoặc máy chủ không khả dụng")
@@ -180,7 +180,7 @@ final class LicenseManager: ObservableObject {
         if http.statusCode != 200 {
             let error = try? JSONDecoder().decode(ServerError.self, from: data)
             if error?.error == "CLIENT_UPDATE_REQUIRED" {
-                throw LicenseError.denied("Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
+                throw LicenseError.denied(error?.message ?? "Phiên bản GooHan này đã ngừng hỗ trợ. Vui lòng cập nhật ứng dụng.")
             }
             throw LicenseError.denied(error?.error ?? "Key không hợp lệ (HTTP \(http.statusCode))")
         }
@@ -218,7 +218,7 @@ final class LicenseManager: ObservableObject {
         let serverTime: Int
         enum CodingKeys: String, CodingKey { case ok, token, expiresAt = "expires_at", serverTime = "server_time" }
     }
-    private struct ServerError: Decodable { let error: String }
+    private struct ServerError: Decodable { let error: String; let message: String? }
     private enum LicenseError: LocalizedError {
         case denied(String)
         case vpnBlocked
