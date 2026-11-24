@@ -253,7 +253,7 @@ struct GooHan3106RemoteView: View {
             VStack(alignment: .leading, spacing: 15) {
                 HStack(spacing: 9) {
                     Circle().fill(accent).frame(width: 9, height: 9)
-                    Text("GÔHÀNIOS • IPA")
+                    Text("GÔHANIOS • IPA")
                         .font(.system(size: 11, weight: .heavy, design: .monospaced))
                         .tracking(1.1)
                         .foregroundColor(accent)
