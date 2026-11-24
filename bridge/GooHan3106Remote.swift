@@ -343,18 +343,9 @@ struct GooHan3106RemoteView: View {
                         .accessibilityLabel("Đồng bộ thư viện từ Admin")
                     }
                 }
-                Text("Các chức năng được cập nhật từ phía Admin.")
+                Text("Đồng Bộ Các Chức Năng Được Update Từ Phía Admin!!")
                     .font(.footnote)
                     .foregroundColor(.white.opacity(0.62))
-                Text("Định dạng đang chọn: .\(effectiveFormat)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(accent)
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.shield")
-                    Text("Đồng bộ & quản lý chức năng")
-                }
-                .font(.caption2)
-                .foregroundColor(.white.opacity(0.55))
 
                 if SandboxAccess.backend == .kernel && appState.needsUnlock {
                     Button {
