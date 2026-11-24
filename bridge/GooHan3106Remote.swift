@@ -432,6 +432,29 @@ struct GooHan3106RemoteView: View {
             }
         }
     }
+    
+    private var recoveryCard: some View {
+        panel {
+            VStack(alignment: .leading, spacing: 9) {
+                Label("KHÔI PHỤC CÁC GÓI ĐANG BẬT", systemImage: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(accent)
+                Text("Luôn cho phép khôi phục kể cả khi đổi chế độ, License hết hạn hoặc Admin gỡ gói.")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.62))
+                ForEach(recoverable) { entry in
+                    Button {
+                        Task { await restore(entry) }
+                    } label: {
+                        Label("Khôi phục \(entry.name)", systemImage: "arrow.uturn.backward")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .disabled(busyPackageID != nil || syncing)
+                }
+            }
+        }
+    }
+
     private func panel<Content: View>(
         @ViewBuilder _ content: () -> Content
     ) -> some View {
