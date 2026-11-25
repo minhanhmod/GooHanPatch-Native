@@ -592,7 +592,10 @@ struct GooHan3106RemoteView: View {
                 throw GH6Error.text("SHA-256 hoặc kích thước không khớp Admin")
             }
             let plan = try decoder().decode(GH6Plan.self, from: data)
-            guard plan.format == "3106-project-v1", plan.game == patch.game else {
+            // Admin v5.14 normalizes both package types to the legacy plan schema.
+            // The catalog format is checked separately above; this is metadata only.
+            guard ["3105-project-v1", "3106-project-v1"].contains(plan.format),
+                  plan.game == patch.game else {
                 throw GH6Error.text("Định dạng hoặc danh mục trong gói không khớp Admin")
             }
             guard let target = plan.bundleId, !target.isEmpty,
