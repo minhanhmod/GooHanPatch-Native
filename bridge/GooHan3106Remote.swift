@@ -387,8 +387,20 @@ struct GooHan3106RemoteView: View {
         }
     }
 
+    // Catalog metadata only: this does not select or authorize a write target.
+    private func needsBundleInspection(_ patch: GH6Package) -> Bool {
+        let expected: String
+        switch patch.game {
+        case "free_fire": expected = "com.dts.freefireth"
+        case "free_fire_max": expected = "com.dts.freefiremax"
+        default: return true
+        }
+        return patch.targetBundleId.map { $0 != expected } ?? false
+    }
+
     private func packageCard(_ patch: GH6Package) -> some View {
         let active = GH6PlanStorage.activeReceipt(for: patch.id) != nil
+        let inspectOnly = !active && needsBundleInspection(patch)
         return panel {
             HStack(spacing: 13) {
                 Image(systemName: active ? "checkmark.shield.fill" : "bolt.shield.fill")
@@ -408,13 +420,23 @@ struct GooHan3106RemoteView: View {
                             .foregroundColor(.white.opacity(0.52))
                             .lineLimit(2)
                     }
-                    Text(active ? "Tắt & Khôi phục" : "Bật Chức Năng")
+                    Text(active ? "Tắt & Khôi phục" : (inspectOnly ? "Kiểm tra Bundle ID" : "Bật Chức Năng"))
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(accent)
                 }
                 Spacer(minLength: 6)
                 if busyPackageID == patch.id {
                     ProgressView().tint(accent)
+                } else if inspectOnly {
+                    Button {
+                        Task { await inspectBundleMetadata(patch) }
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(accent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(busyPackageID != nil || syncing || !patch.enabled)
+                    .accessibilityLabel("Kiểm tra Bundle ID, chỉ đọc")
                 } else {
                     Toggle("", isOn: Binding(
                         get: {
@@ -544,6 +566,48 @@ struct GooHan3106RemoteView: View {
             statusText = "Đã đồng bộ \(incomingPatches.count) gói / \(incomingCategories.count) mục từ GooHan Admin."
         } catch {
             statusText = "Lỗi đồng bộ GooHan: \(error.localizedDescription)"
+        }
+    }
+
+    // Read-only diagnostic: downloads authenticated metadata and verifies the
+    // plan/catalog agreement. Never constructs a PatchProject or writes a target.
+    private func inspectBundleMetadata(_ patch: GH6Package) async {
+        guard busyPackageID == nil && !syncing else { return }
+        busyPackageID = patch.id
+        defer { busyPackageID = nil }
+        do {
+            guard patch.enabled, patch.packageFormat == effectiveFormat,
+                  patch.id.count == 32, patch.id.allSatisfy({ $0.isHexDigit }),
+                  patch.downloadPath == "/downloads/" + patch.id,
+                  patch.size > 0 && patch.size <= 75 * 1024 * 1024,
+                  patch.sha256.count == 64, patch.sha256.allSatisfy({ $0.isHexDigit }) else {
+                throw GH6Error.text("Metadata gói không hợp lệ")
+            }
+            let url = LicenseManager.serverURL
+                .appendingPathComponent("downloads")
+                .appendingPathComponent(patch.id)
+            let data = try await licenseManager.authenticatedData(from: url)
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard data.count == patch.size, digest == patch.sha256.lowercased() else {
+                throw GH6Error.text("SHA-256 hoặc kích thước không khớp Admin")
+            }
+            let plan = try decoder().decode(GH6Plan.self, from: data)
+            guard plan.format == "3106-project-v1", plan.game == patch.game else {
+                throw GH6Error.text("Định dạng hoặc danh mục trong gói không khớp Admin")
+            }
+            guard let target = plan.bundleId, !target.isEmpty,
+                  (try? PatchPathValidator.canonicalBundleIdentifier(target)) == target else {
+                throw GH6Error.text("Gói thiếu Bundle ID hợp lệ")
+            }
+            guard let catalogTarget = patch.targetBundleId, !catalogTarget.isEmpty else {
+                throw GH6Error.text("Admin chưa cung cấp Bundle ID đích")
+            }
+            guard target == catalogTarget else {
+                throw GH6Error.text("Bundle ID trong gói không khớp Admin")
+            }
+            statusText = "Đã nhận diện Bundle ID và đối chiếu Admin thành công. Ứng dụng đích này không nằm trong phạm vi thao tác hiện có của HIGHT. Chưa ghi dữ liệu."
+        } catch {
+            statusText = "Kiểm tra Bundle ID thất bại: \(error.localizedDescription)"
         }
     }
 
