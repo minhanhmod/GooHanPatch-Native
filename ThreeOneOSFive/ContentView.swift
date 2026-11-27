@@ -127,27 +127,102 @@ private extension Color {
                   blue: Double(n & 255) / 255)
     }
 }
+// Presentation only: animated glass bubbles, compatible with older SwiftUI.
 private struct GooGridBackground: View {
     let tint: Color
-    var body: some View {
-        ZStack {
-            Color(red: 0.042, green: 0.051, blue: 0.075)
-            RadialGradient(colors: [tint.opacity(0.25), .clear], center: .topTrailing,
-                           startRadius: 10, endRadius: 500)
-            Canvas { context, size in
-                var path = Path()
-                let gap: CGFloat = 30
-                for x in stride(from: CGFloat(0), through: size.width + gap, by: gap) {
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: size.height))
-                }
-                for y in stride(from: CGFloat(0), through: size.height + gap, by: gap) {
-                    path.move(to: CGPoint(x: 0, y: y))
-                    path.addLine(to: CGPoint(x: size.width, y: y))
-                }
-                context.stroke(path, with: .color(tint.opacity(0.12)), lineWidth: 0.7)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var floating = false
+
+    private func bubble(_ diameter: CGFloat, hue: Color, x: CGFloat, y: CGFloat) -> some View {
+        Circle()
+            .fill(RadialGradient(colors: [hue.opacity(0.38), hue.opacity(0.08), .clear],
+                                 center: .topLeading, startRadius: 1, endRadius: diameter))
+            .overlay(Circle().strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.52), hue.opacity(0.24), .white.opacity(0.04), .white.opacity(0.24)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.3))
+            .overlay(alignment: .topLeading) {
+                Capsule().fill(.white.opacity(0.44))
+                    .frame(width: diameter * 0.25, height: 4)
+                    .rotationEffect(.degrees(-32))
+                    .blur(radius: 2)
+                    .offset(x: diameter * 0.21, y: diameter * 0.19)
             }
-        }.ignoresSafeArea()
+            .shadow(color: hue.opacity(0.26), radius: 18)
+            .frame(width: diameter, height: diameter)
+            .offset(x: x, y: y)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color(red: 0.035, green: 0.043, blue: 0.071)
+                RadialGradient(colors: [tint.opacity(0.36), .clear], center: .topTrailing,
+                               startRadius: 8, endRadius: 520)
+                if !reduceTransparency {
+                    bubble(232, hue: tint, x: floating ? -geo.size.width * 0.32 : -geo.size.width * 0.45,
+                           y: floating ? -geo.size.height * 0.32 : -geo.size.height * 0.43)
+                    bubble(176, hue: .cyan, x: floating ? geo.size.width * 0.43 : geo.size.width * 0.33,
+                           y: floating ? -geo.size.height * 0.13 : -geo.size.height * 0.24)
+                    bubble(254, hue: tint, x: floating ? geo.size.width * 0.30 : geo.size.width * 0.43,
+                           y: floating ? geo.size.height * 0.40 : geo.size.height * 0.28)
+                    bubble(105, hue: .blue, x: floating ? -geo.size.width * 0.32 : -geo.size.width * 0.43,
+                           y: floating ? geo.size.height * 0.20 : geo.size.height * 0.34)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { startFloating() }
+        .onChange(of: reduceMotion) { _ in startFloating() }
+        .onDisappear { floating = false }
+    }
+
+    private func startFloating() {
+        floating = false
+        guard !reduceMotion else { return }
+        withAnimation(.easeInOut(duration: 7).repeatForever(autoreverses: true)) { floating = true }
+    }
+}
+
+private struct GooBubbleGlass: ViewModifier {
+    let tint: Color
+    let radius: CGFloat
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        content
+            .background {
+                ZStack {
+                    if reduceTransparency {
+                        shape.fill(Color(red: 0.12, green: 0.13, blue: 0.18))
+                    } else {
+                        shape.fill(.ultraThinMaterial)
+                        shape.fill(LinearGradient(colors: [.white.opacity(0.20), tint.opacity(0.07), .black.opacity(0.17)],
+                                                  startPoint: .topLeading, endPoint: .bottomTrailing))
+                        shape.fill(RadialGradient(colors: [.white.opacity(0.15), .clear],
+                                                  center: .topLeading, startRadius: 0, endRadius: 130))
+                    }
+                }
+            }
+            .overlay {
+                shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.66), .white.opacity(0.18), tint.opacity(0.48), .white.opacity(0.26)],
+                                                  startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.25)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .top) {
+                Capsule().fill(LinearGradient(colors: [.clear, .white.opacity(0.58), .clear],
+                                               startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 1.4)
+                    .padding(.horizontal, radius)
+                    .padding(.top, 1)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: .black.opacity(0.30), radius: 12, x: 0, y: 6)
     }
 }
 
@@ -389,9 +464,7 @@ struct ContentView: View {
     private func catalogGlass<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
             .padding(10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(LinearGradient(colors: [.white.opacity(0.34), color.opacity(0.20), .white.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+            .modifier(GooBubbleGlass(tint: color, radius: 24))
     }
     private var gamePicker: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -522,47 +595,128 @@ struct ContentView: View {
         }
     }
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content().padding(17).background(Color(red: 0.093, green: 0.103, blue: 0.13).opacity(0.96),
-                                         in: RoundedRectangle(cornerRadius: 21))
-            .overlay(RoundedRectangle(cornerRadius: 21).stroke(.white.opacity(0.085), lineWidth: 1))
+        content().padding(17)
+            .modifier(GooBubbleGlass(tint: color, radius: 24))
     }
+
+    private func settingsSection<Content: View>(_ title: String, icon: String,
+                                                @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(color)
+                    .frame(width: 36, height: 36)
+                    .background(color.opacity(0.13), in: Circle())
+                    .overlay(Circle().strokeBorder(color.opacity(0.40), lineWidth: 1))
+                Text(title).font(.headline)
+                Spacer(minLength: 0)
+            }
+            Rectangle().fill(.white.opacity(0.14)).frame(height: 1)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(GooBubbleGlass(tint: color, radius: 26))
+    }
+
     private var settingsView: some View {
         NavigationView {
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(themeLabel).font(.headline)
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 16) {
-                        ForEach(0..<GooPalette.all.count, id: \.self) { index in
-                            let item = GooPalette.all[index]
-                            Button { themeHex = item.1 } label: {
-                                Circle().fill(Color(gooHex: item.1)).frame(width: 36, height: 36)
-                                    .overlay(Circle().stroke(.white, lineWidth: themeHex == item.1 ? 2.5 : 0))
-                            }.accessibilityLabel(item.0)
+                    settingsSection(themeLabel, icon: "paintpalette.fill") {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 15) {
+                            ForEach(0..<GooPalette.all.count, id: \.self) { index in
+                                let item = GooPalette.all[index]
+                                Button { themeHex = item.1 } label: {
+                                    Circle().fill(Color(gooHex: item.1))
+                                        .overlay(Circle().strokeBorder(.white.opacity(0.32), lineWidth: 1))
+                                        .overlay {
+                                            if themeHex == item.1 {
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 14, weight: .heavy))
+                                                    .foregroundColor(.white)
+                                                    .shadow(color: .black.opacity(0.7), radius: 2)
+                                            }
+                                        }
+                                        .frame(width: 34, height: 34)
+                                        .padding(3)
+                                        .overlay(Circle().strokeBorder(.white.opacity(themeHex == item.1 ? 0.94 : 0), lineWidth: 2))
+                                        .frame(minHeight: 44)
+                                }
+                                .buttonStyle(GooGlassPress())
+                                .accessibilityLabel(item.0)
+                                .accessibilityAddTraits(themeHex == item.1 ? .isSelected : [])
+                            }
                         }
                     }
-                    if let link = URL(string: supportUrl), link.scheme == "https" {
-                        Link("Hỗ trợ", destination: link)
-                            .font(.subheadline).foregroundColor(color)
+
+                    settingsSection("License", icon: "key.fill") {
+                        if let expiry = licenseManager.expirationDate {
+                            Text("Có hiệu lực đến")
+                                .font(.caption).foregroundColor(.white.opacity(0.70))
+                            Text(expiry.formatted(date: .abbreviated, time: .shortened))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        Button { licenseManager.deactivate() } label: {
+                            HStack {
+                                Label("Đăng xuất License", systemImage: "rectangle.portrait.and.arrow.right")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption)
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.orange)
+                            .padding(.vertical, 10)
+                        }.buttonStyle(GooGlassPress())
                     }
-                    Text("")
-                        .font(.footnote).foregroundColor(.secondary)
-                    if let expiry = licenseManager.expirationDate {
-                        Text("License có hiệu lực đến: \(expiry.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.footnote).foregroundColor(.secondary)
+
+                    settingsSection("Đồng bộ & hỗ trợ", icon: "arrow.triangle.2.circlepath") {
+                        Button {
+                            showSettings = false
+                            Task { await sync() }
+                        } label: {
+                            Label(syncButtonLabel, systemImage: "arrow.clockwise")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(color.opacity(0.22), in: Capsule())
+                                .overlay(Capsule().strokeBorder(color.opacity(0.55), lineWidth: 1))
+                                .foregroundColor(.white)
+                        }.buttonStyle(GooGlassPress())
+                        if let link = URL(string: supportUrl), link.scheme == "https" {
+                            Link(destination: link) {
+                                HStack {
+                                    Label("Hỗ trợ", systemImage: "questionmark.circle")
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right").font(.caption)
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(color)
+                                .padding(.vertical, 8)
+                            }
+                        }
                     }
-                    Button("Đăng xuất License") { licenseManager.deactivate() }
-                        .foregroundColor(.orange)
-                    Button(syncButtonLabel) {
-                        showSettings = false
-                        Task { await sync() }
-                    }.buttonStyle(.borderedProminent).tint(color)
-                }.padding(20)
+
+                    Text("GoHan iOS")
+                        .font(.footnote.weight(.medium))
+                        .foregroundColor(.white.opacity(0.55))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .padding(.horizontal, 17)
+                .padding(.vertical, 22)
             }
+            .background(GooGridBackground(tint: color))
             .navigationTitle(settingsTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button("Xong") { showSettings = false }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(color)
             }}
-        }.preferredColorScheme(.dark)
+        }
+        .navigationViewStyle(.stack)
+        .preferredColorScheme(.dark)
     }
     private func baseURL() throws -> URL {
         guard let url = URL(string: serverURL.trimmingCharacters(in: .whitespacesAndNewlines)),
