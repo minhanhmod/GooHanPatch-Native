@@ -34,7 +34,7 @@ private actor GooIconCache {
     static let shared = GooIconCache()
     private let memory = NSCache<NSURL, NSData>()
     private var pending: [URL: Task<Data?, Never>] = [:]
-    private static let maxImageBytes = 2 * 1024 * 1024
+    private static let maxImageBytes = 4 * 1024 * 1024
 
     private init() {
         memory.countLimit = 80
@@ -79,29 +79,27 @@ private actor GooIconCache {
         return dir.appendingPathComponent(key + ".png")
     }
 
-    private static func isValidPNG(_ data: Data) -> Bool {
-        data.count <= maxImageBytes &&
-        data.starts(with: [UInt8(137), 80, 78, 71, 13, 10, 26, 10]) &&
-        UIImage(data: data) != nil
+    private static func isCacheableImage(_ data: Data) -> Bool {
+        // The file suffix is a versioned server path, not a reliable image codec.
+        !data.isEmpty && data.count <= maxImageBytes && UIImage(data: data) != nil
     }
 
     private static func readOrDownload(_ url: URL) async -> Data? {
         let fm = FileManager.default
         let file = cacheFile(url)
-        if let file, let data = try? Data(contentsOf: file), isValidPNG(data) {
+        if let file, let data = try? Data(contentsOf: file), isCacheableImage(data) {
             try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
             return data
         }
         if let file { try? fm.removeItem(at: file) }
         do {
-            var request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 15)
-            request.setValue("image/png", forHTTPHeaderField: "Accept")
+            let request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 15)
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   http.statusCode == 200,
                   http.url?.scheme == "https",
                   http.url?.host == url.host,
-                  isValidPNG(data) else { return nil }
+                  isCacheableImage(data) else { return nil }
             if let file {
                 try? data.write(to: file, options: .atomic)
                 prune(file.deletingLastPathComponent())
@@ -156,6 +154,17 @@ private struct GooCachedIcon<Placeholder: View>: View {
         Group {
             if shownURL == url, let image {
                 Image(uiImage: image).resizable().scaledToFill()
+            } else if let url {
+                // Render using the previously working loader immediately.
+                // Cache failure, response format or storage errors never block display.
+                AsyncImage(url: url) { phase in
+                    if let loaded = phase.image {
+                        loaded.resizable().scaledToFill()
+                    } else {
+                        placeholder()
+                    }
+                }
+                .id(GooIconRequest(url: url, revision: revision))
             } else {
                 placeholder()
             }
