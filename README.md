@@ -1,2 +1,5 @@
 # GoHan HIGHT Metadata Inspector
 Standalone read-only diagnostic. Opens user-selected package files or normalized Admin JSON, compares declared Bundle IDs, and displays a SHA-256 checksum. Only publicly keyed packages are supported; private/password-protected packages are rejected. Does not modify files, access other applications, apply/restore patches, authenticate to Admin, or replace the production app. No native engine dependency. Bundle ID com.gohan.ios.inspector. The workflow builds an unsigned IPA using Apple's SDK. Input file metadata is not proof of authorization or provenance. Original package format and upstream attribution: https://github.com/QuinnTangO/3106 (GPL-3.0). Production LOW/HIGHT and release lock are unchanged.
+
+## Local copy patch
+The inspector additionally supports whole-file content replacement on two explicitly user-selected files. It exports a new document using the system Files exporter, with no direct write to the source file, no automatic target lookup and no execution of a package. This generic document operation does not apply a .3106 package to an installed app. Production LOW/HIGHT are unchanged.

@@ -95,10 +95,15 @@ struct InspectorView: View {
         NavigationStack {
             Form {
                 Section("HIGHT • Kiểm tra metadata") {
-                    Text("Chỉ đọc file được chọn. Không áp dụng Patch, không truy cập ứng dụng khác.")
+                    Text("Kiểm tra metadata chỉ đọc. Không truy cập dữ liệu riêng của ứng dụng khác.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("Chọn tệp") { importing = true }
                     Text(message).font(.footnote)
+                }
+                Section("Patch tệp cục bộ") {
+                    NavigationLink("Áp dụng Patch lên bản sao tệp") { LocalCopyPatchView() }
+                    Text("Chọn tệp gốc và tệp thay thế của bạn trong Files. Không tự áp dụng gói .3106 vào ứng dụng đích.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let result {
                     Section("Kết quả") {
@@ -137,5 +142,114 @@ struct InspectorView: View {
                 } catch { message = error.localizedDescription }
             }
         }.tint(.pink)
+    }
+}
+
+struct LocalCopyDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.data] }
+    var bytes: Data
+    init(bytes: Data = Data()) { self.bytes = bytes }
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw MetadataError(message: "Tệp không hợp lệ.")
+        }
+        bytes = data
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: bytes)
+    }
+}
+
+struct LocalCopyInput {
+    let name: String
+    let bytes: Data
+    var digest: String {
+        SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+struct LocalCopyPatchView: View {
+    private enum Selection { case original, replacement }
+    @State private var selected: Selection = .original
+    @State private var importing = false
+    @State private var exporting = false
+    @State private var confirming = false
+    @State private var original: LocalCopyInput?
+    @State private var replacement: LocalCopyInput?
+    @State private var output = LocalCopyDocument()
+    @State private var outputName = "patched-copy"
+    @State private var message = "Chọn hai tệp thuộc quyền sử dụng của bạn."
+
+    var body: some View {
+        Form {
+            Section("Tệp gốc") {
+                Button("Chọn tệp gốc") {
+                    selected = .original
+                    importing = true
+                }
+                if let original { details(original) }
+            }
+            Section("Tệp thay thế") {
+                Button("Chọn tệp thay thế") {
+                    selected = .replacement
+                    importing = true
+                }
+                if let replacement { details(replacement) }
+            }
+            Section("Áp dụng Patch") {
+                Button("Tạo bản sao đã thay thế") { confirming = true }
+                    .disabled(original == nil || replacement == nil)
+                Text("Chỉ thay toàn bộ nội dung trong một bản sao xuất ra Files. Không ghi đè tệp gốc, không tự tìm ứng dụng đích, không chạy nội dung tệp.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Text(message).font(.footnote)
+            }
+        }
+        .navigationTitle("Patch tệp cục bộ")
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.data], allowsMultipleSelection: false) { selection in
+            do {
+                guard let url = try selection.get().first else { return }
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                let cap = 75 * 1024 * 1024
+                let bytes = try handle.read(upToCount: cap + 1) ?? Data()
+                guard bytes.count <= cap else {
+                    throw MetadataError(message: "Tệp vượt giới hạn 75 MB.")
+                }
+                let input = LocalCopyInput(name: url.lastPathComponent, bytes: bytes)
+                switch selected {
+                case .original: original = input
+                case .replacement: replacement = input
+                }
+                message = "Đã đọc tệp được chọn."
+            } catch { message = error.localizedDescription }
+        }
+        .confirmationDialog("Xuất bản sao có nội dung thay thế?", isPresented: $confirming, titleVisibility: .visible) {
+            Button("Áp dụng và xuất bản sao") {
+                guard let original, let replacement else { return }
+                output = LocalCopyDocument(bytes: replacement.bytes)
+                let name = original.name as NSString
+                let ext = name.pathExtension
+                outputName = name.deletingPathExtension + "-patched-copy" + (ext.isEmpty ? "" : "." + ext)
+                exporting = true
+            }
+            Button("Hủy", role: .cancel) {}
+        }
+        .fileExporter(isPresented: $exporting, document: output, contentType: .data, defaultFilename: outputName) { result in
+            switch result {
+            case .success:
+                message = "Đã xuất bản sao. Tệp gốc không thay đổi."
+            case .failure(let error):
+                message = "Chưa xuất được tệp: " + error.localizedDescription
+            }
+        }
+    }
+    private func details(_ input: LocalCopyInput) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(input.name)
+            Text("\(input.bytes.count) byte").font(.caption)
+            Text("SHA-256: " + input.digest).font(.caption2).textSelection(.enabled)
+        }
     }
 }
