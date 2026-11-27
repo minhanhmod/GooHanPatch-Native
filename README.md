@@ -1,12 +1,2 @@
-# GooHan Patch Native v5.4 – Server-side License
-
-Source includes modified components originally based on YangJiiii/3105 (GPL-3.0); see LICENSE and CREDITS_AND_LICENSE.md.
-
-- Native iOS client: ThreeOneOSFive
-- Backend & Web Admin: server/main.py
-- Tests: tests/
-- GitHub Actions IPA build: .github/workflows/build-goohan-ipa.yml
-
-Security: server-side activation, expiry, revocation, per-device limits and authenticated patch distribution. No client-only key comparison. Session and activation key stored in iOS Keychain. Offline access to new patch packages is disabled. Local restore of prior patch state remains available after license expiry.
-
-No IPA can be made impossible to reverse-engineer. Licensing limits online services, not what a fully modified local client can display. App Attest, if added in future, requires compatible Apple entitlements and valid provisioning.
+# GoHan HIGHT Metadata Inspector
+Standalone read-only diagnostic. Opens user-selected package files or normalized Admin JSON, compares declared Bundle IDs, and displays a SHA-256 checksum. Only publicly keyed packages are supported; private/password-protected packages are rejected. Does not modify files, access other applications, apply/restore patches, authenticate to Admin, or replace the production app. No native engine dependency. Bundle ID com.gohan.ios.inspector. The workflow builds an unsigned IPA using Apple's SDK. Input file metadata is not proof of authorization or provenance. Original package format and upstream attribution: https://github.com/QuinnTangO/3106 (GPL-3.0). Production LOW/HIGHT and release lock are unchanged.

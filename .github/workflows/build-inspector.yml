@@ -1,0 +1,34 @@
+name: HIGHT Metadata Inspector
+on:
+  push:
+    branches: [gohan-hight-metadata-only]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-inspector:
+    if: github.ref == 'refs/heads/gohan-hight-metadata-only'
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build read-only iOS inspector
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/Payload/GoHaniOSInspector.app
+          APP=dist/Payload/GoHaniOSInspector.app
+          cp Inspector/Info.plist "$APP/Info.plist"
+          plutil -lint "$APP/Info.plist"
+          xcrun --sdk iphoneos swiftc -parse-as-library -O -target arm64-apple-ios16.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" Inspector/Inspector.swift -o "$APP/GoHaniOSInspector"
+          test -f "$APP/GoHaniOSInspector"
+          cd dist
+          zip -qr GoHan-HIGHT-Metadata-Inspector-unsigned.ipa Payload
+          unzip -t GoHan-HIGHT-Metadata-Inspector-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GoHan-HIGHT-Metadata-Inspector
+          path: dist/GoHan-HIGHT-Metadata-Inspector-unsigned.ipa
+          if-no-files-found: error
