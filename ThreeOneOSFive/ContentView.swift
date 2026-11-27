@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import CryptoKit
+import UIKit
 
 private struct GooPatch: Codable, Identifiable, Hashable {
     let id: String
@@ -27,6 +28,155 @@ private struct GooCatalogSub: Codable, Identifiable, Hashable {
     let sortOrder: Int
     let enabled: Bool
 }
+// Public category thumbnails only. Cache lives in this app's own Caches directory.
+// Full content-addressed URLs act as version keys; a changed icon is a new key.
+private actor GooIconCache {
+    static let shared = GooIconCache()
+    private let memory = NSCache<NSURL, NSData>()
+    private var pending: [URL: Task<Data?, Never>] = [:]
+    private static let maxImageBytes = 2 * 1024 * 1024
+
+    private init() {
+        memory.countLimit = 80
+        memory.totalCostLimit = 12 * 1024 * 1024
+    }
+
+    func data(for url: URL) async -> Data? {
+        if let hit = memory.object(forKey: url as NSURL) { return hit as Data }
+        if let task = pending[url] { return await task.value }
+        let task = Task.detached(priority: .userInitiated) {
+            await Self.readOrDownload(url)
+        }
+        pending[url] = task
+        let result = await task.value
+        pending[url] = nil
+        if let result {
+            memory.setObject(result as NSData, forKey: url as NSURL, cost: result.count)
+        }
+        return result
+    }
+
+    func prefetch(_ urls: [URL]) async {
+        let unique = Array(Set(urls))
+        for start in stride(from: 0, to: unique.count, by: 4) {
+            if Task.isCancelled { return }
+            let batch = Array(unique[start..<min(start + 4, unique.count)])
+            await withTaskGroup(of: Void.self) { group in
+                for url in batch {
+                    group.addTask { _ = await self.data(for: url) }
+                }
+            }
+        }
+    }
+
+    private static func cacheFile(_ url: URL) -> URL? {
+        guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let dir = root.appendingPathComponent("GooHanCategoryIcons-v1", isDirectory: true)
+        do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+        catch { return nil }
+        let key = SHA256.hash(data: Data(url.absoluteString.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return dir.appendingPathComponent(key + ".png")
+    }
+
+    private static func isValidPNG(_ data: Data) -> Bool {
+        data.count <= maxImageBytes &&
+        data.starts(with: [UInt8(137), 80, 78, 71, 13, 10, 26, 10]) &&
+        UIImage(data: data) != nil
+    }
+
+    private static func readOrDownload(_ url: URL) async -> Data? {
+        let fm = FileManager.default
+        let file = cacheFile(url)
+        if let file, let data = try? Data(contentsOf: file), isValidPNG(data) {
+            try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+            return data
+        }
+        if let file { try? fm.removeItem(at: file) }
+        do {
+            var request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 15)
+            request.setValue("image/png", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 200,
+                  http.url?.scheme == "https",
+                  http.url?.host == url.host,
+                  isValidPNG(data) else { return nil }
+            if let file {
+                try? data.write(to: file, options: .atomic)
+                prune(file.deletingLastPathComponent())
+            }
+            return data
+        } catch {
+            return nil
+        }
+    }
+
+    private static func prune(_ directory: URL) {
+        let fm = FileManager.default
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
+        guard let urls = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles) else { return }
+        let files = urls.compactMap { url -> (url: URL, date: Date, size: Int)? in
+            guard url.pathExtension == "png", let values = try? url.resourceValues(forKeys: keys),
+                  values.isRegularFile == true else { return nil }
+            return (url, values.contentModificationDate ?? .distantPast, values.fileSize ?? 0)
+        }.sorted { $0.date < $1.date }
+        var bytes = files.reduce(0) { $0 + $1.size }
+        var count = files.count
+        for file in files {
+            if bytes <= 24 * 1024 * 1024 && count <= 80 { break }
+            do {
+                try fm.removeItem(at: file.url)
+                count -= 1
+                bytes -= file.size
+            } catch { continue }
+        }
+    }
+}
+
+private struct GooIconRequest: Hashable {
+    let url: URL?
+    let revision: Int
+}
+
+private struct GooCachedIcon<Placeholder: View>: View {
+    let url: URL?
+    let revision: Int
+    let placeholder: () -> Placeholder
+    @State private var image: UIImage?
+    @State private var shownURL: URL?
+
+    init(url: URL?, revision: Int, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+        self.url = url
+        self.revision = revision
+        self.placeholder = placeholder
+    }
+
+    var body: some View {
+        Group {
+            if shownURL == url, let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: GooIconRequest(url: url, revision: revision)) {
+            guard let url else {
+                image = nil
+                shownURL = nil
+                return
+            }
+            if shownURL == url, image != nil { return }
+            let data = await GooIconCache.shared.data(for: url)
+            guard !Task.isCancelled else { return }
+            if let data, let decoded = UIImage(data: data) {
+                image = decoded
+                shownURL = url
+            }
+        }
+    }
+}
+
 private struct GooGlassPress: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
@@ -294,6 +444,7 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var catalogReduceMotion
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
     @State private var categories: [GooCategory] = GooCache.loadCategories()
+    @State private var iconRevision = 0
     @State private var title = "GooHan Patch"
     @State private var kicker = "GOOHAN • PATCH MANAGER"
     @State private var subtitle = "Admin-managed Patch Library"
@@ -402,6 +553,10 @@ struct ContentView: View {
         .navigationViewStyle(.stack)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) { settingsView }
+        .task(id: iconRevision) {
+            let urls = availableCategories.compactMap { iconAddress($0.iconUrl) }
+            await GooIconCache.shared.prefetch(urls)
+        }
         .task {
             if let saved = GooCache.loadConfig() { applyConfig(saved) }
             await sync()
@@ -482,14 +637,10 @@ struct ContentView: View {
                         } label: {
                             catalogGlass {
                                 VStack(spacing: 9) {
-                                    AsyncImage(url: iconAddress(category.iconUrl)) { phase in
-                                        if let image = phase.image {
-                                            image.resizable().scaledToFill()
-                                        } else {
-                                            ZStack {
-                                                LinearGradient(colors: [color.opacity(0.7), Color.black.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                                Image(systemName: "square.grid.2x2.fill").font(.system(size: 27, weight: .semibold)).foregroundColor(.white)
-                                            }
+                                    GooCachedIcon(url: iconAddress(category.iconUrl), revision: iconRevision) {
+                                        ZStack {
+                                            LinearGradient(colors: [color.opacity(0.7), Color.black.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                            Image(systemName: "square.grid.2x2.fill").font(.system(size: 27, weight: .semibold)).foregroundColor(.white)
                                         }
                                     }
                                     .frame(width: 66, height: 66)
@@ -825,6 +976,7 @@ struct ContentView: View {
                let first = availableCategories.first { game = first.id }
             GooCache.saveCatalog(catalog)
             GooCache.saveCategories(categories)
+            iconRevision &+= 1
             message = "Đã đồng bộ \(incoming.count) gói / \(fetchedCategories.count) mục lớn từ Admin." +
                       (configWarning.map { " \($0)" } ?? "")
         } catch {
