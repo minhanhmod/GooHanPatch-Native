@@ -7,6 +7,7 @@ private struct GooPatch: Codable, Identifiable, Hashable {
     let game: String
     // Admin category is presentation; authenticated .3105 Bundle ID is target.
     let categoryId: String?
+    let subId: String?
     let targetBundleId: String?
     let feature: String
     let version: String
@@ -19,12 +20,30 @@ private struct GooPatch: Codable, Identifiable, Hashable {
     let description: String
 }
 private struct GooResponse: Decodable { let patches: [GooPatch] }
+private struct GooCatalogSub: Codable, Identifiable, Hashable {
+    let id: String
+    let majorId: String
+    let name: String
+    let sortOrder: Int
+    let enabled: Bool
+}
+private struct GooGlassPress: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.72), value: configuration.isPressed)
+    }
+}
 private struct GooCategory: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let targetGame: String?
     let sortOrder: Int
     let enabled: Bool
+    var iconUrl: String? = nil
+    var subcategories: [GooCatalogSub]? = nil
 
     static let defaultCategories: [GooCategory] = [
         GooCategory(id: "free_fire", name: "Free Fire", targetGame: "free_fire", sortOrder: 0, enabled: true),
@@ -195,6 +214,9 @@ struct ContentView: View {
     private let serverURL = "https://gohanpatch-adminpatch.zcloudviet.xyz"
     @AppStorage("GooHanThemeHex") private var themeHex = "#FF4757"
     @State private var game = "free_fire"
+    @State private var majorOpen = false
+    @State private var selectedSub: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var catalogReduceMotion
     @State private var catalog: [GooPatch] = GooCache.loadCatalog()
     @State private var categories: [GooCategory] = GooCache.loadCategories()
     @State private var title = "GooHan Patch"
@@ -247,14 +269,15 @@ struct ContentView: View {
                     header
                     gamePicker
                     infoCard
+                    if majorOpen && selectedSub != nil {
                     HStack {
                         Label(sectionLabel, systemImage: "square.stack.3d.up")
                             .font(.system(size: 12, weight: .heavy, design: .monospaced))
                         Spacer()
-                        Text("\(visible.count) gói").foregroundColor(.white.opacity(0.55))
+                        Text("\(groupedPackages.count) gói").foregroundColor(.white.opacity(0.55))
                     }
                     .foregroundColor(color)
-                    if visible.isEmpty {
+                    if groupedPackages.isEmpty {
                         card {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(emptyTitle).font(.headline)
@@ -263,7 +286,8 @@ struct ContentView: View {
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    ForEach(visible) { patch in patchCard(patch) }
+                    ForEach(groupedPackages) { patch in patchCard(patch) }
+                    }
                     card {
                         HStack(alignment: .top, spacing: 11) {
                             Image(systemName: "info.circle.fill").foregroundColor(color)
@@ -334,28 +358,118 @@ struct ContentView: View {
             }
         }
     }
+    // Presentation-only navigation. Category IDs are not modified by grouping.
+    private var selectedMajor: GooCategory? {
+        availableCategories.first { $0.id == game }
+    }
+    private var groups: [GooCatalogSub] {
+        (selectedMajor?.subcategories ?? []).filter { $0.enabled }
+            .sorted { $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder }
+    }
+    private func displayGroup(_ patch: GooPatch) -> String? {
+        guard let sub = patch.subId, !sub.isEmpty else { return "" }
+        if groups.contains(where: { $0.id == sub }) { return sub }
+        // Keep active receipts accessible even if the Admin hides a subgroup.
+        if GooCache.hasReceipt(for: patch) { return "" }
+        if selectedMajor?.subcategories?.contains(where: { $0.id == sub }) == true { return nil }
+        return ""
+    }
+    private var groupedPackages: [GooPatch] {
+        guard let sub = selectedSub else { return [] }
+        return visible.filter { displayGroup($0) == sub }
+    }
+    private func catalogAnimate(_ change: () -> Void) {
+        withAnimation(catalogReduceMotion ? nil : .spring(response: 0.40, dampingFraction: 0.83), change)
+    }
+    private func iconAddress(_ path: String?) -> URL? {
+        guard let path,
+              path.range(of: #"^/uploads/major/[a-z0-9_]{2,64}/[0-9a-f]{64}\.png$"#, options: .regularExpression) != nil else { return nil }
+        return URL(string: path, relativeTo: LicenseManager.serverURL)?.absoluteURL
+    }
+    private func catalogGlass<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [.white.opacity(0.34), color.opacity(0.20), .white.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+    }
     private var gamePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(availableCategories) { category in
-                    gameButton(category.id, category.name)
+        VStack(alignment: .leading, spacing: 14) {
+            if !majorOpen {
+                Label("THƯ VIỆN • MỤC LỚN", systemImage: "square.grid.2x2.fill")
+                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .foregroundColor(color)
+                if availableCategories.isEmpty {
+                    Text("Chưa có mục lớn. Hãy đồng bộ từ Admin.").font(.footnote).foregroundColor(.secondary)
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 12) {
+                    ForEach(availableCategories) { category in
+                        Button {
+                            catalogAnimate { game = category.id; selectedSub = nil; majorOpen = true }
+                        } label: {
+                            catalogGlass {
+                                VStack(spacing: 9) {
+                                    AsyncImage(url: iconAddress(category.iconUrl)) { phase in
+                                        if let image = phase.image {
+                                            image.resizable().scaledToFill()
+                                        } else {
+                                            ZStack {
+                                                LinearGradient(colors: [color.opacity(0.7), Color.black.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                                Image(systemName: "square.grid.2x2.fill").font(.system(size: 27, weight: .semibold)).foregroundColor(.white)
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 66, height: 66)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    Text(category.name).font(.system(size: 12, weight: .semibold, design: .rounded))
+                                        .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.78)
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity, minHeight: 32)
+                                }.frame(maxWidth: .infinity)
+                            }
+                        }.buttonStyle(GooGlassPress())
+                    }
+                }
+            } else {
+                Button {
+                    catalogAnimate {
+                        if selectedSub != nil { selectedSub = nil }
+                        else { majorOpen = false }
+                    }
+                } label: {
+                    Label(selectedSub == nil ? "Tất cả mục lớn" : (selectedMajor?.name ?? "Mục lớn"), systemImage: "chevron.left")
+                        .font(.subheadline.weight(.semibold)).foregroundColor(color)
+                }.buttonStyle(GooGlassPress())
+                Text(selectedSub == nil ? (selectedMajor?.name ?? "Mục lớn") : (groups.first { $0.id == selectedSub }?.name ?? "Chung"))
+                    .font(.title2.bold()).foregroundColor(.white)
+                if selectedSub == nil {
+                    ForEach(groups) { group in
+                        groupRow(group.id, group.name)
+                    }
+                    if groups.isEmpty || visible.contains(where: { displayGroup($0) == "" }) {
+                        groupRow("", "Chung")
+                    }
                 }
             }
-            .padding(.vertical, 2)
         }
-        .accessibilityLabel("Danh sách mục lớn đồng bộ từ Admin")
     }
-    private func gameButton(_ key: String, _ name: String) -> some View {
-        Button { game = key } label: {
-            Text(name).font(.system(size: 13, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .padding(.horizontal, 18).padding(.vertical, 14)
-                .background(game == key ? color.opacity(0.23) : Color.white.opacity(0.07),
-                            in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(game == key ? color : .white.opacity(0.08)))
-                .foregroundColor(.white)
-        }.buttonStyle(.plain)
+    private func groupRow(_ id: String, _ name: String) -> some View {
+        Button {
+            catalogAnimate { selectedSub = id }
+        } label: {
+            catalogGlass {
+                HStack(spacing: 12) {
+                    Image(systemName: "folder.fill").font(.title2).foregroundColor(color)
+                    Text(name).font(.headline).foregroundColor(.white)
+                    Spacer()
+                    Text(String(visible.filter { displayGroup($0) == id }.count))
+                        .font(.caption.monospacedDigit()).foregroundColor(.secondary)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(color)
+                }.padding(6)
+            }
+        }.buttonStyle(GooGlassPress())
     }
+
     private var infoCard: some View {
         card {
             VStack(alignment: .leading, spacing: 10) {
@@ -547,6 +661,12 @@ struct ContentView: View {
             // Update visible state only after receiving both API payloads.
             catalog = incoming + activeMissing
             categories = fetchedCategories + retainedCategories
+            if majorOpen && !availableCategories.contains(where: { $0.id == game }) {
+                majorOpen = false
+                selectedSub = nil
+            } else if let sub = selectedSub, !sub.isEmpty, !groups.contains(where: { $0.id == sub }) {
+                selectedSub = nil
+            }
             if !availableCategories.contains(where: { $0.id == game }),
                let first = availableCategories.first { game = first.id }
             GooCache.saveCatalog(catalog)
