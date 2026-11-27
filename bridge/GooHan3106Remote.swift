@@ -9,6 +9,7 @@ private struct GH6Package: Decodable, Identifiable {
     let id: String
     let game: String
     let categoryId: String?
+    let subId: String?
     let targetBundleId: String?
     let feature: String
     let version: String
@@ -21,12 +22,30 @@ private struct GH6Package: Decodable, Identifiable {
     let description: String
 }
 private struct GH6PackageList: Decodable { let patches: [GH6Package] }
+private struct GooCatalogSub: Codable, Identifiable, Hashable {
+    let id: String
+    let majorId: String
+    let name: String
+    let sortOrder: Int
+    let enabled: Bool
+}
+private struct GooGlassPress: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.72), value: configuration.isPressed)
+    }
+}
 private struct GH6Category: Decodable, Identifiable {
     let id: String
     let name: String
     let targetGame: String?
     let sortOrder: Int
     let enabled: Bool
+    var iconUrl: String? = nil
+    var subcategories: [GooCatalogSub]? = nil
 }
 private struct GH6CategoryList: Decodable { let categories: [GH6Category] }
 
@@ -117,6 +136,9 @@ struct GooHan3106RemoteView: View {
     @State private var packages: [GH6Package] = []
     @State private var categories: [GH6Category] = []
     @State private var selectedCategory = "free_fire_max"
+    @State private var majorOpen = false
+    @State private var selectedSub: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var catalogReduceMotion
     @AppStorage("GooHanThemeHex") private var themeHex = "#F479B7"
     @State private var showSettings = false
     @State private var busyPackageID: String?
@@ -166,17 +188,18 @@ struct GooHan3106RemoteView: View {
                     hero
                     categoryPicker
                     syncCard
+                    if majorOpen && selectedSub != nil {
                     HStack {
                         Label("CHỌN CHỨC NĂNG", systemImage: "square.stack.3d.up")
                             .font(.system(size: 12, weight: .heavy, design: .monospaced))
                         Spacer()
-                        Text("\(visiblePackages.count) gói")
+                        Text("\(groupedPackages.count) gói")
                             .foregroundColor(.white.opacity(0.58))
                     }
                     .foregroundColor(accent)
 
                     if licenseManager.isActive {
-                        if visiblePackages.isEmpty {
+                        if groupedPackages.isEmpty {
                             panel {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Chưa có chức năng")
@@ -188,7 +211,7 @@ struct GooHan3106RemoteView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
-                        ForEach(visiblePackages) { patch in
+                        ForEach(groupedPackages) { patch in
                             packageCard(patch)
                         }
                     } else {
@@ -196,6 +219,7 @@ struct GooHan3106RemoteView: View {
                     }
 
 
+                    }
                     panel {
                         HStack(alignment: .top, spacing: 11) {
                             Image(systemName: "info.circle.fill").foregroundColor(accent)
@@ -274,43 +298,116 @@ struct GooHan3106RemoteView: View {
         }
     }
 
+    // Presentation-only navigation. Category IDs are not modified by grouping.
+    private var selectedMajor: GH6Category? {
+        filteredCategories.first { $0.id == selectedCategory }
+    }
+    private var groups: [GooCatalogSub] {
+        (selectedMajor?.subcategories ?? []).filter { $0.enabled }
+            .sorted { $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder }
+    }
+    private func displayGroup(_ patch: GH6Package) -> String? {
+        guard let sub = patch.subId, !sub.isEmpty else { return "" }
+        if groups.contains(where: { $0.id == sub }) { return sub }
+        // Keep active receipts accessible even if the Admin hides a subgroup.
+        if GH6PlanStorage.activeReceipt(for: patch.id) != nil { return "" }
+        if selectedMajor?.subcategories?.contains(where: { $0.id == sub }) == true { return nil }
+        return ""
+    }
+    private var groupedPackages: [GH6Package] {
+        guard let sub = selectedSub else { return [] }
+        return visiblePackages.filter { displayGroup($0) == sub }
+    }
+    private func catalogAnimate(_ change: () -> Void) {
+        withAnimation(catalogReduceMotion ? nil : .spring(response: 0.40, dampingFraction: 0.83), change)
+    }
+    private func iconAddress(_ path: String?) -> URL? {
+        guard let path,
+              path.range(of: #"^/uploads/major/[a-z0-9_]{2,64}/[0-9a-f]{64}\.png$"#, options: .regularExpression) != nil else { return nil }
+        return URL(string: path, relativeTo: LicenseManager.serverURL)?.absoluteURL
+    }
+    private func catalogGlass<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [.white.opacity(0.34), accent.opacity(0.20), .white.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+    }
     private var categoryPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
+            if !majorOpen {
+                Label("THƯ VIỆN • MỤC LỚN", systemImage: "square.grid.2x2.fill")
+                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .foregroundColor(accent)
                 if filteredCategories.isEmpty {
-                    categoryButton("free_fire", title: "Free Fire")
-                    categoryButton("free_fire_max", title: "Free Fire MAX")
-                    categoryButton("free_fire_vn", title: "Free Fire VN")
-                } else {
+                    Text("Chưa có mục lớn. Hãy đồng bộ từ Admin.").font(.footnote).foregroundColor(.secondary)
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 12) {
                     ForEach(filteredCategories) { category in
-                        categoryButton(category.id, title: category.name)
+                        Button {
+                            catalogAnimate { selectedCategory = category.id; selectedSub = nil; majorOpen = true }
+                        } label: {
+                            catalogGlass {
+                                VStack(spacing: 9) {
+                                    AsyncImage(url: iconAddress(category.iconUrl)) { phase in
+                                        if let image = phase.image {
+                                            image.resizable().scaledToFill()
+                                        } else {
+                                            ZStack {
+                                                LinearGradient(colors: [accent.opacity(0.7), Color.black.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                                Image(systemName: "square.grid.2x2.fill").font(.system(size: 27, weight: .semibold)).foregroundColor(.white)
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 66, height: 66)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    Text(category.name).font(.system(size: 12, weight: .semibold, design: .rounded))
+                                        .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.78)
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity, minHeight: 32)
+                                }.frame(maxWidth: .infinity)
+                            }
+                        }.buttonStyle(GooGlassPress())
+                    }
+                }
+            } else {
+                Button {
+                    catalogAnimate {
+                        if selectedSub != nil { selectedSub = nil }
+                        else { majorOpen = false }
+                    }
+                } label: {
+                    Label(selectedSub == nil ? "Tất cả mục lớn" : (selectedMajor?.name ?? "Mục lớn"), systemImage: "chevron.left")
+                        .font(.subheadline.weight(.semibold)).foregroundColor(accent)
+                }.buttonStyle(GooGlassPress())
+                Text(selectedSub == nil ? (selectedMajor?.name ?? "Mục lớn") : (groups.first { $0.id == selectedSub }?.name ?? "Chung"))
+                    .font(.title2.bold()).foregroundColor(.white)
+                if selectedSub == nil {
+                    ForEach(groups) { group in
+                        groupRow(group.id, group.name)
+                    }
+                    if groups.isEmpty || visiblePackages.contains(where: { displayGroup($0) == "" }) {
+                        groupRow("", "Chung")
                     }
                 }
             }
-            .padding(.vertical, 2)
         }
     }
-
-    private func categoryButton(_ id: String, title: String) -> some View {
+    private func groupRow(_ id: String, _ name: String) -> some View {
         Button {
-            selectedCategory = id
+            catalogAnimate { selectedSub = id }
         } label: {
-            Text(title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .foregroundColor(.white)
-                .padding(.horizontal, 17)
-                .padding(.vertical, 14)
-                .background(
-                    selectedCategory == id ? accent.opacity(0.24) : Color.white.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 14)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(selectedCategory == id ? accent : .white.opacity(0.1), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
+            catalogGlass {
+                HStack(spacing: 12) {
+                    Image(systemName: "folder.fill").font(.title2).foregroundColor(accent)
+                    Text(name).font(.headline).foregroundColor(.white)
+                    Spacer()
+                    Text(String(visiblePackages.filter { displayGroup($0) == id }.count))
+                        .font(.caption.monospacedDigit()).foregroundColor(.secondary)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(accent)
+                }.padding(6)
+            }
+        }.buttonStyle(GooGlassPress())
     }
 
     private var syncCard: some View {
@@ -537,6 +634,12 @@ struct GooHan3106RemoteView: View {
             ).patches
             categories = incomingCategories
             packages = incomingPatches
+            if majorOpen && !filteredCategories.contains(where: { $0.id == selectedCategory }) {
+                majorOpen = false
+                selectedSub = nil
+            } else if let sub = selectedSub, !sub.isEmpty, !groups.contains(where: { $0.id == sub }) {
+                selectedSub = nil
+            }
             if !categories.contains(where: { $0.id == selectedCategory }),
                let first = categories.first {
                 selectedCategory = first.id
