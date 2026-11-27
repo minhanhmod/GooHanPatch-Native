@@ -8,7 +8,7 @@ import Security
 final class LicenseManager: ObservableObject {
     static let serverURL = URL(string: "https://gohanpatch-adminpatch.zcloudviet.xyz")!
     // Only release identifier sent to Admin; not displayed in Settings.
-    private static let releaseID = "GOOHAN_LOW_20261124"
+    private static let releaseID = "GOOHAN_LOW_20261127_GLASS"
     static func identify(_ request: inout URLRequest) {
         request.setValue(releaseID, forHTTPHeaderField: "X-GooHan-Release")
     }
