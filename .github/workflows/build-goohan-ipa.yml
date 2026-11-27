@@ -142,7 +142,7 @@ jobs:
       - name: Checkout exact 3106 upstream source
         uses: actions/checkout@v4
         with:
-          repository: QuinnTang74/3106
+          repository: QuinnTangO/3106
           ref: 832bad906c06d92f55cabf799166f00d45d6a978
           path: upstream3106
           persist-credentials: false
@@ -232,7 +232,7 @@ jobs:
             832bad906c06d92f55cabf799166f00d45d6a978
           cat > READ_ME_FIRST.txt <<'EOF'
           GOOHAN iOS27 - FULL UPSTREAM 3106 ENGINE BASELINE
-          Source: QuinnTang74/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978
+          Source: QuinnTangO/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978
           License: GPL-3.0; see LICENSE, NOTICE.md and included source archive.
           This is the full upstream 3106 app with only its display name changed.
           Its Bundle ID is still com.qingtang.3106; it is NOT the GooHan Admin/License app.
@@ -276,7 +276,7 @@ jobs:
       - name: Checkout pinned full upstream 3106 source
         uses: actions/checkout@v4
         with:
-          repository: QuinnTang74/3106
+          repository: QuinnTangO/3106
           ref: 832bad906c06d92f55cabf799166f00d45d6a978
           path: upstream3106
           persist-credentials: false
@@ -376,7 +376,7 @@ jobs:
             upstream3106/LICENSE upstream3106/NOTICE.md
           cat > gohan3106-dist/READ_ME_FIRST.txt <<'EOF'
           GOOHAN PATCH - OFFICIAL 3106 RELEASE CANDIDATE (UNSIGNED)
-          Original backend: QuinnTang74/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978.
+          Original backend: QuinnTangO/3106, commit 832bad906c06d92f55cabf799166f00d45d6a978.
           Unmodified native worse_query, SandboxAccess, DevicePatchService,
           PatchTransaction plus upstream kernel/bad_query support.
           GooHan License and Admin ZCloudViet library are the MAIN UI, not a
