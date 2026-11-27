@@ -469,7 +469,7 @@ struct ContentView: View {
     private var gamePicker: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !majorOpen {
-                Label("THƯ VIỆN • MỤC LỚN", systemImage: "square.grid.2x2.fill")
+                Label("APP", systemImage: "square.grid.2x2.fill")
                     .font(.system(size: 12, weight: .heavy, design: .monospaced))
                     .foregroundColor(color)
                 if availableCategories.isEmpty {
