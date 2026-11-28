@@ -192,7 +192,7 @@ private struct GooGlassPress: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
             .opacity(configuration.isPressed ? 0.82 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.05), value: configuration.isPressed)
     }
 }
 private struct GooCategory: Codable, Identifiable, Hashable {
@@ -581,7 +581,7 @@ struct ContentView: View {
         return visible.filter { displayGroup($0) == sub }
     }
     private func catalogAnimate(_ change: () -> Void) {
-        withAnimation(catalogReduceMotion ? nil : .easeOut(duration: 0.16), change)
+        withAnimation(catalogReduceMotion ? nil : .easeOut(duration: 0.05), change)
     }
     private func iconAddress(_ path: String?) -> URL? {
         guard let path,
