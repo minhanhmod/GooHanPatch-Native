@@ -287,63 +287,37 @@ private extension Color {
     }
 }
 // Presentation only: animated glass bubbles, compatible with older SwiftUI.
+// Static color-wash wallpaper: no looping animation or moving blur layers.
 private struct GooGridBackground: View {
     let tint: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @State private var floating = false
-
-    private func bubble(_ diameter: CGFloat, hue: Color, x: CGFloat, y: CGFloat) -> some View {
-        Circle()
-            .fill(RadialGradient(colors: [hue.opacity(0.38), hue.opacity(0.08), .clear],
-                                 center: .topLeading, startRadius: 1, endRadius: diameter))
-            .overlay(Circle().strokeBorder(
-                LinearGradient(colors: [.white.opacity(0.52), hue.opacity(0.24), .white.opacity(0.04), .white.opacity(0.24)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.3))
-            .overlay(alignment: .topLeading) {
-                Capsule().fill(.white.opacity(0.44))
-                    .frame(width: diameter * 0.25, height: 4)
-                    .rotationEffect(.degrees(-32))
-                    .blur(radius: 2)
-                    .offset(x: diameter * 0.21, y: diameter * 0.19)
-            }
-            .shadow(color: hue.opacity(0.26), radius: 18)
-            .frame(width: diameter, height: diameter)
-            .offset(x: x, y: y)
-    }
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Color(red: 0.035, green: 0.043, blue: 0.071)
-                RadialGradient(colors: [tint.opacity(0.36), .clear], center: .topTrailing,
-                               startRadius: 8, endRadius: 520)
-                if !reduceTransparency {
-                    bubble(232, hue: tint, x: floating ? -geo.size.width * 0.32 : -geo.size.width * 0.45,
-                           y: floating ? -geo.size.height * 0.32 : -geo.size.height * 0.43)
-                    bubble(176, hue: .cyan, x: floating ? geo.size.width * 0.43 : geo.size.width * 0.33,
-                           y: floating ? -geo.size.height * 0.13 : -geo.size.height * 0.24)
-                    bubble(254, hue: tint, x: floating ? geo.size.width * 0.30 : geo.size.width * 0.43,
-                           y: floating ? geo.size.height * 0.40 : geo.size.height * 0.28)
-                    bubble(105, hue: .blue, x: floating ? -geo.size.width * 0.32 : -geo.size.width * 0.43,
-                           y: floating ? geo.size.height * 0.20 : geo.size.height * 0.34)
+        ZStack {
+            Color(red: 0.035, green: 0.043, blue: 0.071)
+            if !reduceTransparency {
+                GeometryReader { geo in
+                    let radius = max(geo.size.width, geo.size.height)
+                    ZStack {
+                        RadialGradient(colors: [tint.opacity(0.53), tint.opacity(0.19), .clear],
+                                       center: UnitPoint(x: 0.10, y: 0.12),
+                                       startRadius: 0, endRadius: radius * 0.65)
+                        RadialGradient(colors: [Color.indigo.opacity(0.42), Color.blue.opacity(0.12), .clear],
+                                       center: UnitPoint(x: 0.95, y: 0.36),
+                                       startRadius: 0, endRadius: radius * 0.58)
+                        RadialGradient(colors: [tint.opacity(0.36), tint.opacity(0.09), .clear],
+                                       center: UnitPoint(x: 0.74, y: 0.94),
+                                       startRadius: 0, endRadius: radius * 0.60)
+                        RadialGradient(colors: [Color.cyan.opacity(0.15), .clear],
+                                       center: UnitPoint(x: 0.05, y: 0.73),
+                                       startRadius: 0, endRadius: radius * 0.42)
+                    }
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .clipped()
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .onAppear { startFloating() }
-        .onChange(of: reduceMotion) { _ in startFloating() }
-        .onDisappear { floating = false }
-    }
-
-    private func startFloating() {
-        floating = false
-        guard !reduceMotion else { return }
-        withAnimation(.easeInOut(duration: 7).repeatForever(autoreverses: true)) { floating = true }
     }
 }
 
