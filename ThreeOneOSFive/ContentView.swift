@@ -192,7 +192,7 @@ private struct GooGlassPress: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
             .opacity(configuration.isPressed ? 0.82 : 1)
-            .animation(reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.72), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 private struct GooCategory: Codable, Identifiable, Hashable {
@@ -321,6 +321,7 @@ private struct GooGridBackground: View {
     }
 }
 
+// Lightweight glass appearance. No backdrop sampling, blur or per-card shadow.
 private struct GooBubbleGlass: ViewModifier {
     let tint: Color
     let radius: CGFloat
@@ -328,34 +329,22 @@ private struct GooBubbleGlass: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        content
+        return content
             .background {
-                ZStack {
-                    if reduceTransparency {
-                        shape.fill(Color(red: 0.12, green: 0.13, blue: 0.18))
-                    } else {
-                        shape.fill(.ultraThinMaterial)
-                        shape.fill(LinearGradient(colors: [.white.opacity(0.20), tint.opacity(0.07), .black.opacity(0.17)],
-                                                  startPoint: .topLeading, endPoint: .bottomTrailing))
-                        shape.fill(RadialGradient(colors: [.white.opacity(0.15), .clear],
-                                                  center: .topLeading, startRadius: 0, endRadius: 130))
-                    }
+                if reduceTransparency {
+                    shape.fill(Color(red: 0.12, green: 0.13, blue: 0.18))
+                } else {
+                    shape.fill(LinearGradient(
+                        colors: [.white.opacity(0.17), tint.opacity(0.08), .black.opacity(0.22)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
                 }
             }
             .overlay {
-                shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.66), .white.opacity(0.18), tint.opacity(0.48), .white.opacity(0.26)],
-                                                  startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.25)
+                shape.strokeBorder(LinearGradient(
+                    colors: [.white.opacity(0.64), .white.opacity(0.18), tint.opacity(0.40), .white.opacity(0.22)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.2)
                     .allowsHitTesting(false)
             }
-            .overlay(alignment: .top) {
-                Capsule().fill(LinearGradient(colors: [.clear, .white.opacity(0.58), .clear],
-                                               startPoint: .leading, endPoint: .trailing))
-                    .frame(height: 1.4)
-                    .padding(.horizontal, radius)
-                    .padding(.top, 1)
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: .black.opacity(0.30), radius: 12, x: 0, y: 6)
     }
 }
 
@@ -474,7 +463,7 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     header
                     gamePicker
                     infoCard
@@ -592,7 +581,7 @@ struct ContentView: View {
         return visible.filter { displayGroup($0) == sub }
     }
     private func catalogAnimate(_ change: () -> Void) {
-        withAnimation(catalogReduceMotion ? nil : .spring(response: 0.40, dampingFraction: 0.83), change)
+        withAnimation(catalogReduceMotion ? nil : .easeOut(duration: 0.16), change)
     }
     private func iconAddress(_ path: String?) -> URL? {
         guard let path,
